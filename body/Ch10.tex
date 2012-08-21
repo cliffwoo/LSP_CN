@@ -1,0 +1,1277 @@
+\ifx\atempxetex\usewhat
+\XeTeXinputencoding "utf-8"
+\fi
+\defaultfont
+
+\chapter{时间}
+
+时间在现代操作系统中有许多用途，许多程序都需要追踪它。内核从三个角度来度量时间：
+
+\textit{墙上时间（或真实时间)}
+
+这是真实世界中的实际时间和日期——就是说，是墙上挂钟的时间。进程在与用户交互以及为事件标记时间戳时使用墙上时间。
+
+\textit{进程时间}
+
+即进程消耗的时间，包括用户空间代码直接使用的时间和在内核在该进程上消耗的时间。进程通常在对程序进行剖析和统计时使用它(例如，来衡量一个操作耗时多少)。因为Linux是多任务的，在度量进程行为时使用墙上时间容易产生误导，一个操作的进程时间可能比墙上时间少许多。进程也会消耗掉相当多个时钟周期去等待I/O（尤其是键盘输入）。
+
+\textit{单调时间}
+
+这个时间源是严格线性增长的。包括Linux在内的大多数操作系统，使用计算机的正常运行时间（系统已启动的时间）。墙上时间可能会发生变化(例如用户可以进行设定或系统会由于误差不断调校这个时间),也会引入某些不精确性，例如闰秒。系统正常运行时间，从另一方面来说，是一种确定的不可改变的时间表示方法。单调时间源的重要性不在于当前值，而是可以保证时间源线性增长，并利用该特性来计算两次时间采样的差值。
+
+因而单调时间适合来计算相对时间，而墙上时间对于衡量绝对时间更为理想。
+
+这三种时间测量方法可以用以下两种形式来表现： 
+
+\textit{相对时间}
+
+这是相对于某个基准时间（例如当前时刻）的值：举个例子，从现在起5秒钟，或者10分钟之前。
+
+\textit{绝对时间}
+
+表示不含任何基准的时间，例如1968年3月25日中午。 
+
+相对和绝对两种时间形式都是有用的。一个进程可能需要在500毫秒内取消一个请求，每秒刷新60次屏幕，或者记录某操作开始后已经过去了7秒。所有这些都需计算相对时间。反过来，一个日历应用可能要保存用户聚会日期为2月8日，一个文件系统将在某个文件创建时写入完整的日期和时间（而不是“5秒前” 这样的相对时间），用户的时钟显示公历日期，不是自系统启动后的相对时间。
+
+Unix系统使用从大纪元——定义为1970年1月1日00:00:00——以来经过的秒数来表示绝对时间。UTC（协调世界时）差不多就是GMT（格林尼治标准时间）或祖鲁时间。有意思的是，这意味着在Unix中即便是绝对时间本身，从更底层来讲也是相对的。Unix引入了一种特殊的数据类型来存储“自从大纪元以来流逝的秒数”，我们将在下一节探讨。
+
+软件时钟是由内核维护的时钟，操作系统通过软件时钟来追踪时间进程。内核初始化一个遵循特定频率的周期计时器，一般被称为系统计时器 (system timer)。当一个计时器间隔结束时，内核将消耗时间值增加一个单位，记做一个tick 或者 jiffy。记录jiffy数量的计数器被称作jiffy计数器(jiffies counter)。jiffy以前是32位值，在2.6 Linux内核后则使用64位值进行计数。\footnote[1]{Linux内核的未来版本可能会是“无时钟报时”或者会实现“动态时钟报时”，即内核不会记录一个显式jiffy值。这样所有基于时间的内核操作将伴随动态建立的计时器执行，而不是系统计时器。}
+
+Linux中的系统计时器频率被称为HZ，因为有个同样名字的宏被定义来指称这个概念。HZ的值是体系结构相关的，并且不是 Linux ABI的一部分——就是说，程序不能依赖于，也不能期望它等于某个特定值。历史上，x86架构定义该值为100，表示系统计时器每秒钟运行100次（就是说系统计时器的频率是100HZ）。这就使每个jiffy的值为0.01秒——1/HZ秒。在2.6 Linux内核中，内核开发者把HZ的值一下子提升到1000，使得每个jiffy的值变成0.001秒。然而，在2.6.13和之后的版本中，HZ是 250，每个jiffy为0.004秒。\footnote[1]{HZ现在是内核编译期的可选项，在x86架构上值可以是100、250和1000。与此无关的是，用户空间不能依赖于任何特定的HZ值。}在HZ的值的选择上需要加以权衡：较高的值能提供较高的精度，但带来了更大的计时器开销。
+
+尽管进程不应依赖于任何确定的HZ值，POSIX定义了一种在运行时确定系统计时器频率的机制： 
+
+\begin{lstlisting}
+  long hz;
+
+  hz = sysconf (_SC_CLK_TCK);
+  if (hz ==  -1)
+  	perror (``sysconf''); /* should never occur */
+\end{lstlisting}
+  
+当一个程序想要确定系统计时器频率的时候，这个函数很有帮助，但将系统时间转换到秒就没有必要使用它了，因为大多数POSIX函数输出的时间测量结果已经被转换或者缩放至一个与HZ无关的确定值。与HZ不同的是，这个固定的频率是系统ABI的一部分；在x86上的值是100。以系统时钟周期数做为返回值的 POSIX函数用CLOCKS\_PER\_SEC来表示该固定的频率。
+
+偶尔，一些突发事件会导致计算机意外关闭。有时计算机甚至会被断电；然而到启动时，时间仍然正确无误。这是因为大多数计算机都有一个电池供电的硬件时钟在其关闭时存储时间和日期。当内核启动时，就从该硬件时钟来初始化当前时间。同样，当用户关闭计算机时，内核将时间写回到硬件时钟里。系统管理员可以通过hwclock命令将时钟更新为其他时间。
+
+管理Unix系统的时间包括几个任务，其中只有一部分是所有进程都需要关心的，其中包括设定和取得当前墙上时间，计算消耗时间，睡眠一段时间，进行精确的时间测量，以及控制定时器。本章涵盖了时间相关的所有内容。我们将从Linux表示时间的数据结构开始看起。 
+
+\section{时间的数据结构}
+
+随着各种Unix系统的发展，它们用多种数据结构来表示看似简单的时间概念，并在此基础上实现了各自的时间管理函数。这些数据结构可以说是花样繁多，既有简单的整型，也有多字段结构体。在我们深入函数细节之前，我们先来讨论一下这些数据结构。 
+
+\subsection{原始表示}
+
+最简单的数据结构是time\_t，定义在头文件<time.h>中。time\_t意图成为隐晦的类型。然而，在大多数Unix系统上(包括Linux)这个类型是一个简单的C语言的长整型： 
+
+\begin{lstlisting}
+  typedef long time_t;
+\end{lstlisting}
+
+time\_t表示自大纪元以来已流逝的秒数。对此人们典型的反应是“那岂不是过不了多久就会溢出！”。实际上，会比你想的要久一些，但在大量目前仍然在使用的Unix系统中确实会出现溢出。使用32位的长整型，time\_t最多能表示大纪元后2,147,483,647秒。这表示我们将会在2038年再一次遭遇千年虫！然而幸运的是，在2038年一月18日，星期一的22:14:07时，大多数系统和软件将会是64位的。
+
+\subsection{微秒级精度}
+
+与time\_t相关的另外一个问题是一秒钟内会发生很多事情。timeval结构对time\_t进行了扩展而达到了微秒级精度。头文件<sys/time.h>对其定义如下: 
+
+\begin{lstlisting}
+  #include <sys/time.h>
+
+  struct timeval {
+      time_t tv_sec; /* seconds */
+      suseconds_t tv_usec; /* microseconds */
+  };  
+\end{lstlisting}
+
+tv\_sec衡量秒数，而tv\_usec衡量毫秒数。令人困惑的suseconds\_t通常是一个整型的typedef。 
+
+\subsection{纳秒级精度}
+
+出于对毫秒级精度的不满，timespec结构将精度提高到了纳秒级。头文件<time.h>对其定义如下： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  struct timespec {
+      time_t tv_sec; /* seconds */
+      long tv_nsec; /* nanoseconds */
+  };
+\end{lstlisting}
+
+如果有选择，函数会更愿意采用纳秒级精度而非毫秒级。因此，引入timespec结构后，大多数时间相关的函数就采用了它，并获得了更高的精度。然而，正如我们将看到的，一个重要的函数仍然使用timeval。
+
+在实践中，因为系统计时器没有提供纳秒级甚至毫秒级的精度，没有任何一个这里所提到的结构能够提供其所声明的精度。不过，函数中尽量采用可用的高精度是较好的选择，因为这样就可以利用系统所提供的各种精度。
+
+\subsection{“分解”时间}
+
+我们将要讨论的一些函数经常需要进行Unix时间与字符串之间的转换，或者构建一个字符串来表示时间。为了简化该过程，标准C提供了结构体tm，将Unix时间拆分为人们容易理解的格式。这个结构也定义在<time.h>中： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  struct tm {
+      int tm_sec; /* seconds */
+      int tm_min; /* minutes */
+      int tm_hour; /* hours */
+      int tm_mday; /* the day of the month */
+      int tm_mon; /* the month */
+      int tm_year; /* the year */
+      int tm_wday; /* the day of the week */
+      int tm_yday; /* the day in the year */
+      int tm_isdst; /* daylight savings time? */
+  #ifdef _BSD_SOURCE
+      long tm_gmtoff; /* time zone's offset from GMT */
+      const char *tm_zone; /* time zone abbreviation */
+  #endif /* _BSD_SOURCE */
+  };
+\end{lstlisting}
+
+tm结构体可以让我们更容易的理解time\_t的值代表什么，比如说，314159是周日还是周六（应该是前者）。从占用空间的角度来看，这样表示日期时间显然是一个糟糕的选择，但使用这种表示来转换面向用户的值时却更加方便。
+
+tm结构体有如下这些字段： 
+
+\begin{eqlist*}
+\item [tm\_sec]
+在分钟后的秒数。这个值通常在0到59之间，但也可以达到61来表示最多2个闰秒。
+\item [tm\_min]
+小时后的分钟数。这个值在0到59之间。 
+\item [tm\_hour]
+午夜过后的小时数。这个值在0到23之间。 
+\item [tm\_mday]
+该月的日期。这个值在0到31之间。POSIX并没有指定0值；然而，Linux用它表示上个月的最后一天。 
+\item [tm\_mon]
+从一月以来的月数。这个值在0到11之间。
+\item [tm\_year]
+从1900年以来的年数。
+\item [tm\_wday]
+从周日以来的天数。这个值在0到6之间。
+\item [tm\_yday]
+从一月1日以来的日期数。这个值在0到365之间。
+\item [tm\_isdst]
+这个值用来表示夏令时（DST）在其他字段描述的时间是否有效。如果这个值为正，那么DST有效。如果是0，DST无效。如果是负数，DST的状态未知。
+\item [tm\_gmtoff]
+以秒计的当前时区与格林尼治时间偏差值。这个字段仅仅在包含<time.h>之前定义了\_BSD\_SOURCE才会出现。
+\item [tm\_zone]
+当前时区的缩写——例如EST。这个字段仅仅在包含<time.h>之前定义了\_BSD\_SOURCE才会出现。 
+\end{eqlist*}
+
+\subsection{一种进程时间类型}
+
+clock\_t类型表示时钟“滴答”数。这是个整数类型，通常是长整型。对于不同函数，clock\_t表示系统实际计时器频率（HZ）或者CLOCKS\_PER\_SEC。
+
+\section{POSIX时钟}
+
+本章讨论的一些系统调用使用了POSIX时钟，它是一种实现和表示时间源的标准。clockid\_t类型表示了特定的POSIX时钟，Linux支持其中四种：
+
+\begin{eqlist*}
+\item [CLOCK\_MONOTONIC]
+一个不可被任何进程设置的单调增长的时钟。它表示自某个非特定起始点以来流逝的时间，例如从系统启动开始。
+\item [CLOCK\_PROCESS\_CPUTIME\_ID]
+一个处理器提供给每个进程的高精度时钟。例如，在i386架构上，这个时钟采用时间戳计数（TSC）寄存器。
+\item [CLOCK\_REALTIME]
+系统级真实时间（墙上时间）时钟。设置该时钟需要特殊权限。
+\item [CLOCK\_THREAD\_CPUTIME\_ID]
+和每个进程的时钟类似，但是是线程独有的。
+\end{eqlist*}
+POSIX定义了所有四个时间源，但只有CLOCK\_REALTIME是必须实现的。因而，虽然Linux提供了所有四个时钟，但可移植的代码应该仅仅使用CLOCK\_REALTIME。 
+
+\section{时间源精度}
+
+POSIX定义了clock\_getres()函数来取得给定时间源的精度。
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int clock_getres (clockid_t clock_id,
+                    struct timespec *res);
+\end{lstlisting}
+成功调用clock\_getres()会将clock\_id指定的时钟精度存储到res中，如果结果不是NULL，就返回0。失败时，函数返回-1，并设置errno为以下两个错误码>之一：
+
+\begin{eqlist*}
+\item [EFAULT]
+res是一个非法的指针。 
+\item [EINVAL]
+clock\_id在该系统上不是一个可用的时间源。 
+\end{eqlist*}
+
+以下的示例代码将输出先前讨论的四种时间源的精度：
+
+\begin{lstlisting}
+  clockid_t clocks[] = {
+          CLOCK_REALTIME,
+          CLOCK_MONOTONIC,
+          CLOCK_PROCESS_CPUTIME_ID,
+          CLOCK_THREAD_CPUTIME_ID,
+	  (clockid_t) -1 };
+  int i;
+
+  for (i = 0; clocks[i] != (clockid_t) -1; i++) {
+      struct timespec res;
+      int ret;
+
+      ret = clock_getres (clocks[i], &res);
+      if (ret)
+	  perror (``clock_getres'');
+      else
+	  printf (``clock=%d sec=%ld nsec=%ld\n'',
+  clocks[i], res.tv_sec, res.tv_nsec);
+  }
+\end{lstlisting}
+
+在现代x86系统上，输出大致类似于下面的样子： 
+
+\begin{verbatim}
+  clock=0 sec=0 nsec=4000250
+  clock=1 sec=0 nsec=4000250
+  clock=2 sec=0 nsec=1
+  clock=3 sec=0 nsec=1
+\end{verbatim}
+
+注意到4,000,250纳秒是4毫秒，也就是0.004秒。反过来，0.004秒也是给定HZ值为250的x86系统时钟的精度(这正是我们在本章第一节所讨论的)。这样，我们看到CLOCK\_REALTIME和CLOCK\_MONOTONIC二者都和jiffy数以及系统计时器所提供的精度有关。相反的，CLOCK\_PROCESS\_CPUTIME\_ID和CLOCK\_THREAD\_CPUTIME\_ID则使用了一种更高精度的时间源——在同一台x86机器上，就是TSC，它能提供纳秒级精度。
+
+在Linux上（还有大多数其他Unix系统），所有使用POSIX时钟的函数都需要将目标文件与librt链接。举例来说，如果想把刚才的代码片断编译成完整的可执行程序，你可能会用到以下的命令：
+
+\begin{verbatim}
+  $ gcc -Wall -W -O2 -lrt -g -o snippet snippet.c
+\end{verbatim}
+
+\section{取得当前时间}
+
+应用程序出于以下几个目的来获取当前日期和时间：显示给用户，计算相对时间或者流逝的时间，给事件标记时间戳等等。最简单也是最常用的获取当前时间的方法是通过time()函数：
+
+\begin{lstlisting}
+  #include <time.h>
+
+  time_t time (time_t *t);
+\end{lstlisting}
+
+time()调用返回当前时间，以自从大纪元以来用秒计的的流逝的秒数来表示。如果参数t非NULL，该函数也将当前时间写入到提供的指针t中。
+
+错误时，函数返回-1（类型转换到一个time\_t），并且设置errno为相应的值。 唯一可能的errno值是EFAULT，这说明t不是一个合法的指针。
+
+举个例子： 
+
+\begin{lstlisting}
+  time_t t;
+
+  printf(``current time: %ld\n'', (long) time (&t));
+  printf(``the same value: %ld\n''. (long) t);
+\end{lstlisting}
+
+\begin{center}
+\begin{boxedminipage}{\textwidth}
+\begin{center}\textbf{ 一个简陋的计时方法}\end{center}
+time\_t表示的“自从大纪元以来流逝的秒数”并不是真正的从那刻起经过的秒数。Unix的计算方法假定了所有能被四整除的年份都是闰年，并且忽略了所有的闰秒。time\_t表示法的要点不在于精确，而在于一致。
+\end{boxedminipage}
+\end{center}
+
+
+\subsection{一个更好的接口}
+
+gettimeofday()函数扩展了time()，在其基础上提供了微秒级精度支持： 
+
+\begin{lstlisting}
+  #include <sys/time.h>
+
+  int gettimeofday (struct timeval *tv,
+		    struct timezone *tz);
+\end{lstlisting}
+
+功调用gettimeofday()将当前时间放到由tv指向的timeval结构中，并返回0。timezone结构和tz参数已经老掉牙了；都不该在Linux中使用。一般传递NULL给tz。 
+
+看个例子： 
+
+\begin{lstlisting}
+  struct timeval tv;
+  int ret;
+
+  ret = gettimeofday (&tv, NULL);
+  if (ret)
+      perror ("gettimeofday");
+  else
+      printf ("seconds=%ld useconds=%ld\n",
+	      (long) tv.tv_sec, (long) tv.tv_usec);
+\end{lstlisting}
+
+timezone结构已经过时，因为内核不再管理时区，而且glibc不能使用timezone结构的tz\_dstime字段。我们将在下一节研究如何操作时区。 
+
+\subsection{一个高级接口}
+
+POSIX提供了clock\_gettime()来取得一个指定时间源的时间。然而更有用的是，该函数可以达到纳秒级精度。 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int clock_gettime (clockid_t clock_id,
+		     struct timespec *ts);
+\end{lstlisting}
+
+成功时，调用返回0，并将clock\_id指定的时间源的当前时间存储到ts中。失败时，调用返回-1，并设置errno为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+ts不是合法指针。 
+\item [EINVAL]
+clock\_id在该系统上不是合法时间源。 
+\end{eqlist*}
+
+\begin{lstlisting}
+  clockid_t clocks[] = {
+      CLOCK_REALTIME,
+      CLOCK_MONOTONIC,
+      CLOCK_PROCESS_CPUTIME_ID,
+      CLOCK_THREAD_CPUTIME_ID,
+      (clockid_t) -1 };
+  int i;
+
+  for (i = 0; clocks[i] != (clockid_t) -1; i++) {
+      struct timespec ts;
+      int ret;
+	
+      ret = clock_gettime (clocks[i], &ts);
+      if (ret)
+	  perror ("clock_gettime");
+      else
+	  printf ("clock=%d sec=%ld nsec=%ld\n",
+      clocks[i], ts.tv_sec, ts.tv_nsec);
+}
+
+\end{lstlisting}
+
+\subsection{取得进程时间}
+
+times()系统调用取得正在运行的当前进程及其子进程的进程时间，进程时间以时钟报时信号表示。 
+
+\begin{lstlisting}
+  #include <sys/times.h>
+
+  struct tms {
+      clock_t tms_utime; /* user time consumed */
+      clock_t tms_stime; /* system time consumed */
+      clock_t tms_cutime; /* user time consumed by children */
+      clock_t tms_cstime; /* system time consumed by children */
+  };
+
+  clock_t times (struct tms *buf);
+\end{lstlisting}
+
+成功时，调用将发起进程及其子进程消耗的进程时间写入到buf所指的tms结构中。统计的时间分成用户和系统时间。用户时间是在用户空间执行代码所用的时间。系统时间是在内核空间执行所用的时间(例如进行系统调用或者发生一个页错误所消耗的时间)。每个子进程的耗时统计只在该子进程已经终结，且父进程对其调用了 waitpid()（或者相关函数）之后才被包含进来。调用返回时钟报时信号数，并从过去的某个参考点单调递增。过去曾以系统时间做为参考点(也就是说，times()函数返回系统开机来的时间以时钟报时信号数进行计算。)而目前的参考点则是以系统启动前大约四亿两千九百万秒。内核开发者之所以这样做是为了捕获那些无法处理系统启动瞬间发生问题的内核代码。这个函数返回的绝对值是没什么用的；而两次调用的相对时间，则仍然有意义。
+
+失败时，调用返回-1，并设置errno。在Linux上，唯一可能的错误码是EFAULT，表示buf不是合法指针。 
+
+\section{设置当前时间}
+
+前面的章节讨论了如何获取时间，应用程序偶尔也会需要将当前时间日期设置为一个给定值。大多数系统都会提供一个独立的工具(例如date命令)来解决这个问题。
+
+在时间设置中，与time()相对的是stime()： 
+
+\begin{lstlisting}
+  #define _SVID_SOURCE
+  #include <time.h>
+
+  int stime (time_t *t);
+\end{lstlisting}
+
+成功调用stime()会设置系统时间为t所指向的值并返回0。调用需要发起者拥有CAP\_SYS\_TIME权限。一般的，只有root用户才有该权限。
+
+失败时，调用返回-1，并设置errno为EFAULT，表示t不是合法指针，或者EPERM，表示发起者没有CAP\_SYS\_TIME权限。
+
+用法相当简单： 
+
+\begin{lstlisting}
+  time_t t = 1;
+  int ret;
+
+  /* set time to one second after the epoch */
+  ret = stime (&t);
+  if (ret)
+      perror ("stime");
+\end{lstlisting}
+
+我们将在接下来一节看看将我们所习惯的时间格式方便的转换成time\_t类型。 
+
+\subsection{高精度定时}
+
+与gettimeofday()对应的是settimeofday()： 
+
+\begin{lstlisting}
+  #include <sys/time.h>
+
+  int settimeofday (const struct timeval *tv ,
+  		    const struct timezone *tz);
+\end{lstlisting}
+
+成功调用settimeofday()将系统时间设定为tv给出的值并返回0。和gettimeofday()一样，让tz传递NULL是不错的选择。失败时，调用返回-1，并将errno设置为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+tv或者tz指向非法内存。 
+\item [EINVAL]
+提供的结构体中某个字段为无效值。 
+\item [EPERM]
+调用进程没有CAP\_SYS\_TIME权限。 
+\end{eqlist*}
+
+下面的例子将当前时间设置为1979年十二月中的一个周六。 
+
+\begin{lstlisting}
+  struct timeval tv = { .tv_sec = 31415926,
+			.tv_usec = 27182818 };
+  int ret;
+
+  ret = settimeofday (&tv, NULL);
+  if (ret)
+      perror ("settimeofday");
+\end{lstlisting}
+
+\subsection{设置时间的一个高级接口}
+
+就像clock\_gettime()改进了gettimeofday()一样，clock\_settime()让settimeofday()过时了： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int clock_settime (clockid_t clock_id,
+		     const struct timespec *ts);
+\end{lstlisting}
+
+成功调用，返回0，而clock\_id指定的时间源被设置为ts指定的时间。失败时，调用返回-1，并设置errno为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+ts不是一个合法指针。  
+\item [EINVAL]
+clock\_id在该系统上不是合法时间源。  
+\item [EPERM]
+进程没有设定该时间源的相关权限，或则该时间源不能被设置。 
+\end{eqlist*}
+
+在大多数系统上，唯一可以设置的时间源是CLOCK\_REALTIME。因此，这个函数比settimeofday()唯一优越之处在于提供了纳秒级精度（还有不用处理无聊的timezone结构体）。 
+
+\section{玩转时间}
+
+Unix系统和C语言提供了一系列函数来进行“分解”时间（ASCII字符串表示的时间）和time\_t之间的转换。asctime()将tm结构体——“分解”时间——转换成一个ASCII字符串： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  char * asctime (const struct tm *tm);
+  char * asctime_r (const struct tm *tm, char *buf);
+\end{lstlisting}
+
+它返回一个指向静态分配的字符串的指针。之后对任何时间函数的调用都可能覆盖该字符串；asctime()不是线程安全的。
+
+这样，多线程程序（以及讨厌这种糟糕设计的开发者）应该使用asctime\_r()。该函数不使用静态分配字符串的指针，而使用buf提供的，至少有26个字符长度的字符串。
+
+两个函数在错误时都返回NULL。
+
+mktime()也转换tm结构体，但是转换为一个time\_t。 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  time_t mktime (struct tm *tm);
+\end{lstlisting}
+
+mktime()也通过tzset()将时区设置为tm指定的值。错误时返回-1（类型转换到一个time\_t）。
+
+ctime()将一个time\_t转换为ASCII表示： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  char * ctime (const time_t *timep);
+  char * ctime_r (const time_t *timep, char *buf);
+\end{lstlisting}
+
+失败时，返回NULL。举例来说：
+
+\begin{lstlisting}
+  time_t t = time (NULL);
+
+  printf ("the time a mere line ago: %s", ctime (&t));
+\end{lstlisting}
+
+需要注意的是没有新行出现。可能有些不方便，但ctime()还是在其返回字符串后追加了一个空行。
+
+和asctime()一样，ctime()返回一个静态字符串的指针。由于这样不是线程安全的，基于线程的多线程程序应该用ctime\_r()来替代它，该函数在buf所指向的缓冲区上工作。此缓冲区最少应有26个字符长度。 
+
+gmtime()将给出的time\_t转换到tm结构体，用UTC时区格式表示： 
+
+\begin{lstlisting}
+ #include <time.h>
+
+ struct tm * gmtime (const time_t *timep);
+ struct tm * gmtime_r (const time_t *timep, struct tm *0result);
+\end{lstlisting}
+
+失败时，返回NULL。
+
+这个函数静态的分配返回结构体返回静态分配的结构体指针，因此也不是线程安全的。基于线程的多线程程序应使用gmtime\_r()，该函数在result指向的结构体上完成操作。
+
+localtime()和localtime\_r()函数则分别类似于gmtime()和gmtime\_r()，但他们将给出的time\_t表示为用户时区: 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  struct tm * localtime (const time_t *timep);
+  struct tm * localtime_r (const time_t *timep, struct tm *result);
+\end{lstlisting}
+
+像mktime()那样，localtime()的调用也会调用tzset()，并初始化时区。localtime\_r()是否执行此步骤，则并未指明则是不确定的。
+
+difftime()返回两个time\_t值的差值，并转换到双精度浮点类型来表示相差的秒数。 
+
+\begin{lstlisting}
+  include <time.h>
+
+  double difftime (time_t time1, time_t time0);
+\end{lstlisting}
+
+在所有POSIX系统上，time\_t是一个算术类型，而difftime()等价于以下值，且不进行除开减法溢出的检测：
+
+\begin{lstlisting}
+  (double) (time1 - time0)
+\end{lstlisting}
+
+在Linux上，由于time\_t是一个整型，没有必要将其转换成双精度浮点。然而为了保持可移植性，最好使用difftime()。 
+
+\section{调校系统时钟}
+
+墙上时间的突然变化会对那些操作依赖于绝对时间的应用造成严重破坏。考虑一个make(make是根据Makefile的内容来构建软件项目的程序)的例子。每次执行该程序并不重建整个源代码树；如果这样处理，对于大型软件项目，一个文件的小改动可能会花费数个小时进行重新编译。make一般是比对源文件（比如，wolf.c）和目标文件（wolf.o）改变的时间戳。如果源文件——或者它的任何依赖文件，例如wolf.h——比目标文件新，make会将源文件编译成一个更新的目标文件。然而如果源文件不比目标文件新，则不做处理。
+
+了解这些基本知识后，考虑下如果用户知道了他的时钟比正确时间晚了几个小时，并运行了date来更新系统时间后会发生什么事情。如果用户接下来更新并再次存储了wolf.c，我们就可能有麻烦了。如果用户把当前时间向前调整，wolf.c可能会比wolf.o要旧(即使并非如此！),并不会进行重建。
+
+为了防止这样的问题发生，Unix提供了adjtime()函数，用户可以以指定的增量逐渐的调整时间。这样做是为了让类似网络时间协议守护进程（NTP）一类的后台程序可以逐渐的调整时间的差值，用adjtime()来最小化它们对系统的影响： 
+
+\begin{lstlisting}
+  #define _BSD_SOURCE
+  #include <sys/time.h>
+
+  int adjtime (const struct timeval *delta,
+	       struct timeval *olddelta);
+\end{lstlisting}
+
+成功调用djtime()，指示内核使用增量delta来逐渐调整时间，然后返回0。如果delta指定的时间是正值，内核将加速系统时钟直到修正彻底完成。如果delta指定时间是负值，内核将减缓系统时钟直到修正完成。内核进行的所有改动都保证时钟单调递增并且不会有突然的跳变。即使是 delta为负值，调整仍然不会回拨时钟；而是调慢时钟直到系统时间达到正确的时间。
+
+如果delta不是NULL，内核停止处理所有之前注册的改动。对于已经完成的改动，内核将继续保留。如果olddelta不是 NULL，所有先前注册但未完成的改动将写入timeval结构体。delta设置为NULL，并将olddelta设置为一个合法值将可以获得所有正在进行的改动。
+
+adjtime()所进行的改动应该不大——理想的例子是之前提到的NTP,每次只改动几秒。Linux可以做的最小修改和最大修改阈值均有几千秒。
+
+错误时，adjtime()返回-1，并设置errno为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+delta或olddelta不是合法指针。 
+\item [EINVAL]
+delta指定的调整过大或者过小。
+\item [EPERM]
+发起调用的用户没有CAP\_SYS\_TIME权限。 
+\end{eqlist*}
+
+RFC 1305定义了一个比adjtime()采用的渐进调整方法更加强大和更加复杂的时钟调整算法。Linux用adjtimex()系统调用实现了该算法。 
+
+\begin{lstlisting}
+  #include <sys/timex.h>
+
+  int adjtimex (struct timex *adj);
+\end{lstlisting}
+
+调用adjtimex()可以将内核中与时间相关的参数读取到adj指向的timex结构体中。系统调用可以选择性的根据该结构体的modes字段来额外设置某些参数。
+
+在头文件<sys/time.h>中定义了timex结构体： 
+
+\begin{lstlisting}
+  struct timex {
+      int modes; /* mode selector */
+      long offset; /* time offset (usec) */
+      long freq; /* frequency offset (scaled ppm) */
+      long maxerror; /* maximum error (usec) */
+      long esterror; /* estimated error (usec) */
+      int status; /* clock status */
+      constant; /* PLL time constant */
+      long precision; /* clock precision (usec) */
+      long tolerance; /* clock frequency tolerance (ppm) */
+      struct timeval time; /* current time */
+      long tick; /* usecs between clock ticks */
+  };
+\end{lstlisting}
+
+modes字段是由零或多个以下标志位按位或的结果： 
+
+\begin{eqlist*}
+\item [ADJ\_OFFSET]
+通过offset设置时间偏移量。
+\item [ADJ\_FREQUENCY]
+通过freq设置频率偏移量。 
+\item [ADJ\_MAXERROR]
+通过maxerror设置最大错误值。
+\item [ADJ\_ESTERROR]
+通过esterror设置估计错误值。 
+\item [ADJ\_STATUS]
+通过status设置时钟状态。
+\item [ADJ\_TIMECONST]
+通过constant设置锁相环（PLL）时间常量。 
+\item [ADJ\_TICK]
+通过tick设置时钟计时信号值。 
+\item [ADJ\_OFFSET\_SINGLESHOT]
+使用简单算法(例如adjtime)通过offset设置一次时间偏移量。 
+\end{eqlist*}
+
+如果modes是0，就没有设置值。只有拥有CAP\_SYS\_TIME权限的用户才能给modes赋非零值；任何用户均可，将设置mode为0，从而取得所有参数，但不能设置任何值。
+
+成功时，adjtimex()返回当前时钟状态，是下列几个值之一： 
+
+\begin{eqlist*}
+\item [TIME\_OK]
+时钟被同步。 
+\item [TIME\_INS]
+将插入一闰秒。
+\item [TIME\_DEL]
+将去除一闰秒。 
+\item [TIME\_OOP]
+恰好正在一个闰秒的进行中 。
+\item [TIME\_OOP]
+一闰秒刚刚出现。 
+\\item [TIME\_BAD]
+时钟未同步。 
+\end{eqlist*}
+
+失败时，adjtimex()返回-1，并设置errno为下列错误码之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+adj不是一个合法指针。 
+\item [EINVAL]
+一个或更多的modes，offset或者tick非法。 
+\item [EPERM]
+modes是非零值，但调用者没有CAP\_SYS\_TIME权限。 
+\end{eqlist*}
+
+adjtimex()系统调用是Linux特有的。关心可移植性的应用应该倾向于使用adjtime()。
+
+RFC 1305定义了一个复杂的算法，对adjtimex()的完整讨论超出了本书的范围。想知道更多信息，请参阅RFC。 
+
+\section{睡眠和等待}
+
+有各种各样的函数能使进程睡眠（暂停执行）指定的一段时间。第一个这样的函数，sleep()，让发起进程睡眠由seconds指定的秒数。 
+
+\begin{lstlisting}
+﻿  #include <unistd.h>
+
+  unsigned int sleep (unsigned int seconds);
+\end{lstlisting}
+
+该调用返回未睡眠的秒数。就是说，成功的调用返回0，但该函数可能返回介于0到包括seconds之间的值（比如说一个信号中断了睡眠）。这个函数不会设置errno。大多数sleep()的用户不会关心进程实际上睡眠了多久，因而接下来就不检查返回值了。 
+
+\begin{lstlisting}
+﻿  sleep (7); /* sleep seven seconds */
+\end{lstlisting}
+
+如果真的希望进程睡眠达到指定时间的话，你可以根据返回值来继续调用sleep()，直到返回0。 
+
+\begin{lstlisting}
+﻿  unsigned int s = 5;
+
+  /* sleep five seconds: no ifs, ands, or buts about it */
+  while ((s = sleep (s)))
+      ;
+\end{lstlisting}
+
+\subsection{微秒级精度睡眠}
+
+以整秒的粒度进行睡眠实在是太死板了。在一个现代操作系统上一秒钟简直就是永恒，所以程序经常需要在亚秒的精度下睡眠。看一下 usleep()：
+ 
+\begin{lstlisting}
+  /* BSD version */
+  #include <unistd.h>
+
+  void usleep (unsigned long usec);
+ 
+  /* SUSv2 version */
+  #define _XOPEN_SOURCE 500
+  #include <unistd.h>
+ 
+  int usleep (useconds_t usec);
+\end{lstlisting}
+
+\subsection{Linux的实时支持}
+
+成功调用usleep()可以使发起进程睡眠usec微秒。不幸的是，BSD和Single UNIX Specification（单一UNIX规范）在该函数原型定义上持不同意见。BSD版本使用一个无符号长整型，并且没有返回值。然而SUS版本定义 usleep()接受一个useconds\_t类型，并返回一个整型。如果XOPEN\_SOURCE定义为500或者更大的值，Linux就和SUS一样。如果XOPEN\_SOURCE未定义，或者设定值小于500，Linux就和BSD一样。
+
+SUS版本在成功时返回0，出错时返回-1。合法的errno值包括: 睡眠被信号打断时为EINTR，由于usecs太大而导致的错误为EINVAL（在Linux上，该类型的整个范围都是合法的，这样该错误就不会出现）。
+
+根据规范，useconds\_t类型是能满足最大值为1,000,000的无符号整型。
+
+由于不同原型之间的冲突，以及部分Unix系统可能只支持一种，不要在你的代码中包括useconds\_t类型是明智的做法。为了尽可能满足可移植性，最好假设参数是无符号整型，并且不要依赖于usleep()的返回值： 
+
+\begin{lstlisting}
+  void usleep (unsigned int usec);
+\end{lstlisting}
+
+用法就是： 
+
+\begin{lstlisting}
+  unsigned int usecs = 200;
+
+  usleep (usecs);
+\end{lstlisting}
+
+这样就可以满足该函数的不同形式，并且可以检测错误： 
+
+\begin{lstlisting}
+  errno = 0;
+  usleep (1000);
+  if (errno)
+      perror ("usleep");
+\end{lstlisting}
+
+但是对大多数程序来讲，它们并不检查也不关心usleep()的错误。
+
+\subsection{纳秒级精度睡眠}
+
+Linux不赞成使用usleep()函数，而是提供了一个更加智能且可以提供纳秒级精度的函数——nanosleep()： 
+
+\begin{lstlisting}
+#define _POSIX_C_SOURCE 199309
+#include <time.h>
+
+int nanosleep (const struct timespec *req,
+		struct timespec *rem);
+\end{lstlisting}
+
+成功调用nanosleep(),使进程睡眠req所指定的时间，并返回0。错误时，调用返回-1，并设置errno为相应值。如果一个信号打断了睡眠，调用可在指定时间消耗完之前返回。在这种情况下，nanosleep()返回-1，并设置errno为EINTR。如果rem不是NULL，函数把剩余睡眠时间（req中没有睡眠的值）放到rem中。程序随后会重新调用，将rem作参数传递给req（像本节之后所示）。 
+
+下面是其它可能的errno值：
+
+\begin{eqlist*}
+\item [EFAULT]
+req或者rem不是合法指针。 
+\item [EINVAL]
+req中一个字段非法。
+\end{eqlist*}
+
+在一般情况下，用法很简单： 
+
+\begin{lstlisting}
+  struct timespec req = { .tv_sec = 0,
+			  .tv_nsec = 200 };
+
+  /* sleep for 200 ns */
+  ret = nanosleep (&req, NULL);
+  if (ret)
+      perror ("nanosleep");
+\end{lstlisting}
+
+下面是当睡眠被打断时使用第二个参数来继续的例子： 
+
+\begin{lstlisting}
+  struct timespec req = { .tv_sec = 0,
+			  .tv_nsec = 1369 };
+  struct timespec rem;
+  int ret;
+ 
+  /* sleep for 1369 ns */
+  retry:
+  ret = nanosleep (&req, &rem);
+  if (ret) {
+      if (errno == EINTR) {
+          /* retry, with the provided time remaining */
+          req.tv_sec = rem.tv_sec;
+          req.tv_nsec = rem.tv_nsec;
+          goto retry;
+      }
+      perror ("nanosleep");
+  }
+\end{lstlisting}
+
+最后，下面是另外一种方法（可能更加有效，但可读性较差），可以达到同样效果： 
+
+\begin{lstlisting}
+  struct timespec req = { .tv_sec = 1,
+			.tv_nsec = 0 };
+  struct timespec rem, *a = &req, *b = &rem;
+
+  /* sleep for 1s */
+  while (nanosleep (a, b) && errno == EINTR) {
+ 	struct timespec *tmp = a;
+ 	a = b;
+	b = tmp;
+}
+\end{lstlisting}
+
+nanosleep()相对于sleep()和usleep()有几个优点： 
+
+\begin{itemize}
+\item 提供纳秒级精度，其他两者只能提供秒或者微秒精度。 
+\item POSIX.1b标准。 
+\item 不是用信号来实现（该方法的缺陷将在之后讨论） 。
+\end{itemize}
+
+尽管有反对之声，很多程序仍然倾向于使用usleep()而不是nanosleep()——所幸至少越来越少的程序使用sleep()。因为 nanosleep()是POSIX标准，并且不使用信号，新程序最好使用它（或者将在下一节讨论的接口）而不要用sleep()或者usleep()。 
+
+\subsection{实现睡眠的高级方法}
+
+我们已经见识过了各种类型的时间函数。此外，POSIX还提供了一个最高级的睡眠函数： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int clock_nanosleep (clockid_t clock_id,
+		       int flags,
+		       const struct timespec *req,
+		       struct timespec *rem);
+\end{lstlisting}
+
+clock\_nanosleep()的行为类似于nanosleep()。实际上，这个调用： 
+
+\begin{lstlisting}
+  ret = nanosleep (&req, &rem);
+\end{lstlisting}
+
+等价于这个调用： 
+
+\begin{lstlisting}
+  ret = clock_nanosleep (CLOCK_REALTIME, 0, &req, &rem);
+\end{lstlisting}
+
+两者的差别在于clock\_id和flags参数。前者指定了用来衡量的时间源。虽然你不能指定调用进程的CPU时钟（例如 CLOCK\_PROCESS\_CPUTIME\_ID），不过大部分时间源都是合法的；这样做没有任何意义，因为调用将使进程挂起，这样进程时间将停止增长。
+
+时间源的选择取决于你让程序进入睡眠的目的。如果你想要睡眠到某个绝对时间值，CLOCK\_REALTIME大概是最好的选择。如果你准备睡眠某个相对值的时间，CLOCK\_MONITONIC绝对是理想的时间源。
+
+flags参数是TIMER\_ABSTIME或者0。如果是TIMER\_ABSTIME，req指定的是一个绝对的时间值。这样处理解决了一个潜在的竞态条件。为了解释该参数的值，可以假设一个进程处于时间T0，想要睡眠到时间T1。在T0时，进程调用了clock\_gettime()来取得当前时间（T0）。然后从T1中减去T0，得到Y，传递给clock\_nanosleep()。在获取时间和进程进入睡眠之间，总是需要一些时间的。然而糟糕的是，如果在这期间进程被调度失去处理器控制权或者发生一个页错误，对于此类情况，我们该如何处理？在取得当前时间，计算时间差，以及实际睡眠之间总是存在着竞争条件的。
+
+TIMER\_ABSTIME标志允许进程直接指定T1,从而避免了竞争。在指定时间源到达T1前，内核会一直挂起该进程。如果指定时间源的当前时间已经超过T1，调用立即返回。
+
+让我具体看一下相对睡眠和绝对睡眠。下面的例子中，进程睡眠1.5秒钟： 
+
+\begin{lstlisting}
+  struct timespec ts = { .tv_sec = 1, .tv_nsec = 500000000 };
+  int ret;
+
+  ret = clock_nanosleep (CLOCK_MONOTONIC, 0, &ts, NULL);
+  if (ret)
+      perror ("clock_nanosleep");
+\end{lstlisting}
+
+相应的，下面的例子睡眠到某个绝对时间，在本例中是clock\_gettime()调用返回CLOCK\_MONOTONIC时间源之后精确的一秒钟。 
+
+\begin{lstlisting}
+  struct timespec ts; 
+  int ret;
+
+  /* we want to sleep until one second from NOW */
+  ret = clock_gettime (CLOCK_MONOTONIC, &ts);
+  if (ret) {
+      perror ("clock_gettime");
+      return;
+  }
+
+  ts.tv_sec += 1;
+  printf ("We want to sleep until sec=%ld nsec=%ld\n",
+	   ts.tv_sec, ts.tv_nsec);
+  ret = clock_nanosleep (CLOCK_MONOTONIC, TIMER_ABSTIME,
+			 &ts, NULL);
+  if (ret)
+      perror ("clock_nanosleep");
+\end{lstlisting}
+
+大多数程序只需要一个相对的睡眠，因为他们的睡眠并不十分严格。然而某些实时进程，对时间要求相当严格，需要绝对睡眠来避免产生潜在的具有破坏性的竞态条件。 
+
+\subsection{sleep的一种可移植实现}
+
+回忆我们在第二章中提到select()： 
+
+\begin{lstlisting}
+  #include <sys/select.h>
+
+  int select (int n,
+	      fd_set *readfds,
+	      fd_set *writefds,
+	      fd_set *exceptfds,
+	      struct timeval *timeout);
+\end{lstlisting}
+
+正如当时所提到的那样，select()提供了一种实现亚秒精度、可移植睡眠的方法。在很长一段时间内，可移植的Unix程序由于sleep()无法满足短暂的睡眠需求而表现的很糟糕：usleep()并不是在各个系统上都实现的，而nanosleep()还没有编写。开发者发现给select()的n传递0，并给所有三个fd\_set指针传递NULL，以及把需要睡眠的时间传给timeout，就产生了一种可移植且有效的方法让进程睡眠： 
+
+\begin{lstlisting}
+  struct timeval tv = { .tv_sec = 0,
+			.tv_usec = 757 };
+
+  /* sleep for 757 us */
+  select (0, NULL, NULL, NULL, &tv);
+\end{lstlisting}
+
+如果需要考虑对于较早的Unix系统的可移植性，使用select()可能是你最好的办法。 
+
+\subsection{超限}
+
+本节讨论的所有接口都保证进程至少睡眠指定的时间（或者返回错误来表示其他情况）。睡眠进程不达到指定的时间绝不返回成功。但是存在某种可能，会使睡眠时间超过指定时间。
+
+这种现象可以归咎于简单的调度行为——指定的时间可能已经过去了，内核可能会及时唤醒进程，但调度器可能选择了另外一个任务运行。
+
+然而这里可以有一个更加隐蔽的原因：定时器超限(timer overruns)。当定时器的粒度比要求的时间间隔大时就会发生这种情况。举例来说，假设系统定时器每10毫秒产生一次报时信号，而进程要求1毫秒的睡眠。系统只能在10毫秒的精度下测量并响应时间相关的事件（例如把进程从睡眠中唤醒）。如果进程发起睡眠请求时，定时器距离下次报时信号还有1毫秒，一切都将正常——在1毫秒内，请求的时间（1毫秒）将会过去，而内核将唤醒进程。然而，如果定时器在进程请求睡眠时刚好产生报时信号，接下来的10毫秒将不会产生报时信号。那么，进程将会多睡眠9毫秒！也就是说，会有九个1毫秒的超限发生。平均来说，一个有X度量单位的定时器会有X/2的几率超限。
+
+使用POSIX时钟提供的高精度时间源，或者用较高的HZ值，可以减少定时器超限。 
+
+\subsection{替代睡眠}
+
+如果可能的话，你应该尽量避免使用睡眠。通常来说这很难做到，但问题也不大，特别是当你的代码的睡眠时间少于一秒钟的时候。使用睡眠来忙等待事件的发生是很糟糕的设计。在文件描述符上阻塞，允许内核来处理睡眠和唤醒进程的代码，则是比较好的。内核能够让进程从运行转到阻塞，并只在需要时唤醒它，而不是让进程为了等待事件触发而不断的循环。 
+
+\section{定时器}
+
+定时器提供了在一定时间过去后通知进程的机制。定时器超时所需的时间叫做延迟（delay），或者超时值（expiration）。内核通知进程定时器已经到期的方式与定时器有关。Linux内核提供了几种定时器，我们随后将一一讨论。 
+
+定时器在很多情况下都非常有用，例如每秒刷新60此屏幕，或者在某个阻塞的传输过程持续运行500毫秒后取消它。
+
+\subsection{简单的闹钟}
+
+alarm()是最简单的定时器接口： 
+
+\begin{lstlisting}
+  #include <unistd.h>
+
+  unsigned int alarm (unsigned int seconds);
+\end{lstlisting}
+
+对该函数的调用会在真实时间(real time)seconds秒之后将SIGALRM信号发给调用进程。如果先前的信号尚未处理，调用就取消该信号，并用新的来代替它，并返回先前的剩余秒数。如果seconds是0，就取消掉之前的信号，但不设置新的闹钟。 
+
+想要成功调用该函数，需要为SIGALRM信号注册一个信号处理程序。（信号和信号处理程序的内容在前一章已经讨论过。）下面的代码段注册了一个SIGALRM处理程序，alarm\_handler()，并设置了一个五秒钟的闹钟： 
+
+\begin{lstlisting}
+  void alarm_handler (int signum)
+  {
+      printf ("Five seconds passed!\n");
+  }
+
+  void func (void)
+  {
+      signal (SIGALRM, alarm_handler);
+      alarm (5);
+
+      pause ();
+  }
+\end{lstlisting}
+
+\subsection{间歇定时器}
+
+间歇定时器系统调用，最早出现在4.2BSD中，目前已经是POSIX标准，它可以提供比alarm()更多的控制。 
+
+\begin{lstlisting}
+  #include <sys/time.h>
+
+  int getitimer (int which,
+		 struct itimerval *value);
+
+  int setitimer (int which,
+		 const struct itimerval *value,
+		 struct itimerval *ovalue);
+\end{lstlisting}
+间歇定时器和alarm()的操作方式相似，但它能够自动重启自身，并在以下三个独有的模式中之一下工作:
+
+\begin{eqlist*}
+\item [ITIMER\_REAL]
+测量真实时间。当指定的真实时间过去后，内核将SIGALRM信号发给进程。 
+\item [ITIMER\_VIRTUAL]
+只在进程用户空间的代码执行时减少。当指定的进程时间过去后，内核将SIGVTALRM发给进程。
+\item [ITIMER\_PROF]
+在进程执行以及内核为进程服务时（例如完成一个系统调用）都会减少。当指定的时间过去后，内核将SIGPROF信号发给进程。这个模式一般和ITIMER\_VIRTUAL共用，这样程序就能衡量进程消耗的用户时间和内核时间。
+\end{eqlist*}
+
+ITIMER\_REAL衡量的时间和alarm()相同；另外两个模式对于剖析程序很有帮助。
+
+itimeval结构体允许用户在定时器过期或终止的时限，如果设定了值，则在过期后重启定时器: 
+
+\begin{lstlisting}
+  struct itimerval {
+      struct timeval it_interval; /* next value */
+      struct timeval it_value; /* current value */
+  };
+\end{lstlisting}
+
+回忆先前可以提供微秒级精度的timeval结构体：
+
+\begin{lstlisting}
+  struct timeval {
+      long tv_sec; /* seconds */
+      long tv_usec; /* microseconds */
+  };
+\end{lstlisting}
+
+settimer()设置一个过期时间为it\_value的定时器。一旦时长超过it\_value，内核使用it\_interval所指定的时长重启定时器。当it\_value达到0时，时间间隔则被设置为it\_interval。如果定时器失效且it\_interval为0 ，则不会重启定时器。类似的，如果一个活动定时器的it\_value被设置为0，则定时器停止，并且不会重启。
+
+如果ovalue不是NULL，则会返回which类型的间歇定时器的前一个值。
+
+getitimer()返回which类型的间歇定时器的当前值。
+
+两个函数在成功时都返回0，并在出错时返回-1，设置errno为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+value或者ovalue不是合法指针。
+\item [EINVAL]
+which不是合法的间歇定时器类型。
+\end{eqlist*}
+
+下面的代码段创建了一个SIGALRM信号处理程序（参见第九章），并将间歇定时器的过期时间设置为5秒，后续的过期时间为1秒。 
+
+\begin{lstlisting}
+  void alarm_handler (int signo)
+  {
+      printf ("Timer hit!\n");
+  }
+
+  void foo (void) {
+  struct itimerval delay;
+      int ret;
+
+      signal (SIGALRM, alarm_handler);
+
+      delay.it_value.tv_sec = 5;
+      delay.it_value.tv_usec = 0;
+      delay.it_interval.tv_sec = 1;
+      delay.it_interval.tv_usec = 0;
+      ret = setitimer (ITIMER_REAL, &delay, NULL);
+      if (ret) {
+          perror ("setitimer");
+          return;
+      }
+
+      pause ( );
+  }
+\end{lstlisting}
+
+一些Unix系统通过SIGALRM实现了sleep()和usleep()。很显然，alarm()和setitimer()也使用了SIGALRM。因而，程序员必须十分小心，不要重复调用这些函数。重复调用的结果是未定义的。如果只是需要短暂的等待，程序员应该使用nanosleep()，因为 POSIX标准中规定nanosleep()不能使用信号。如果需要定时器，程序员应该使用setitimer()或者alarm()。 
+
+\subsection{高级定时器}
+
+最强大的定时器接口，毫无疑问来自于POSIX的时钟函数。
+
+POSIX中基于时钟的定时器，建立实例、初始化以及最终删除定时器函数分别使用三个函数：timer\_create()建立定时器，timer\_settime()初始化定时器，timer\_delete()则销毁它。 
+
+\begin{wrapfigure}{l}{2.5cm}
+  \includegraphics[width=2cm,clip]{paipai.png}
+\end{wrapfigure}
+\mbox{}POSIX的定时器接口毫无疑问是最先进的，但也是最新的（因而可移植性最差），同时是最不易使用的。如果优先考虑简洁或者可移植性，那么setitimer()是更好的选择。 
+
+
+\subsubsection{建立一个定时器}
+
+使用timer\_create()建立一个定时器： 
+
+\begin{lstlisting}
+  #include <signal.h>
+  #include <time.h>
+
+  int timer_create (clockid_t clockid,
+		    struct sigevent *evp,
+		    timer_t *timerid);
+\end{lstlisting}
+
+成功调用timer\_create()建立一个与POSIX时钟clockid相关联的新定时器，在timerid中存储一个唯一的定时器标记，并返回0。该调用很少不会设置定时器运行的条件；就像在下一节将要看到的那样，在启动定时器之前什么都不会发生。 
+
+下面的例子在POSIX时钟CLOCK\_PROCESS\_CPUTIME\_ID上建立了一个新的定时器，并将定时器ID存储到timer中。 
+
+\begin{lstlisting}
+  timer_t timer;
+  int ret;
+
+  ret = timer_create (CLOCK_PROCESS_CPUTIME_ID,
+		      NULL,
+		      &timer);
+  if (ret)
+      perror ("timer_create");
+\end{lstlisting}
+
+失败时，调用返回-1，timerid则未定义，调用设置errno为下列值之一：
+
+\begin{eqlist*}
+\item [EAGAIN]
+系统缺少足够的资源来完成请求。 
+\item [EINVAL]
+clockid指定的POSIX时钟是非法的。
+ \item [ENOTSUP]
+clockid指定的POSIX时钟合法，但是系统不支持使用该时钟作为定时器。POSIX保证所有实现均支持CLOCK\_REALTIME时钟作为定时器。其它的时钟是否支持依赖于不同实现。 
+\end{eqlist*}
+
+evp参数(非NULL条件下)定义了当定时器到期时的异步通知。头文件<signal.h>定义了该结构体。它的内容对程序员来说是不可见的，但至少包含以下字段： 
+
+\begin{lstlisting}
+  #include <signal.h>
+
+  struct sigevent {
+      union sigval sigev_value;
+      int sigev_signo;
+      int sigev_notify;
+      void (*sigev_notify_function)(union sigval);
+      pthread_attr_t *sigev_notify_attributes;
+  };
+
+  union sigval {
+      int sival_int;
+      void *sival_ptr;
+  };
+\end{lstlisting}
+
+在基于时钟的POSIX定时器到期时，在内核在如何通知进程的问题上有更多的控制能力，它允许进程指定内核将发送的信号，甚至让内核产生一个新线程在定时器到期时完成一定的功能。进程在定时器过期时的行为通过sigev\_notify来指定，必须是以下三个值之一： 
+
+\begin{eqlist*}
+\item [SIGEV\_NONE]
+一个“空的”通知。当定时器到期时，什么都不发生。
+\item [SIGEV\_SIGNAL]
+当定时器到期时，内核给进程发送一个由sigev\_signo指定的信号。在信号处理程序中，si\_value被设置为sigev\_value。 
+ \item [SIGEV\_THREAD]
+当定时器过期时，内核产生一个新线程（在该进程内），并让其执行sigev\_notify\_function，将sigev\_value做为它唯一的参数。该线程在这个函数返回时终止。如果sigev\_notify\_attributes不是NULL，pthread\_attr\_t结构体则定义了新线程的行为。 
+\end{eqlist*}
+
+就像之前的例子中看到的，如果evp是NULL，定时器的到期通知将做如下设置:sigev\_notify为SIGEV\_SIGNAL，sigev\_signo为SIGALRM，sigev\_value 为定时器的ID。就是说，缺省情况下这些定时器以POSIX间歇定时器的方式进行通知。然而通过自定义方式，可以做更多的工作！ 
+
+下面的例子建立了一个基于CLOCK\_REALTIME的定时器。当定时器到期时，内核发出SIGUSR1信号，并把si\_value设置成存储定时器ID的地址值： 
+
+\begin{lstlisting}
+  struct sigevent evp;
+  timer_t timer;
+  int ret;
+
+  evp.sigev_value.sival_ptr = &timer;
+  evp.sigev_notify = SIGEV_SIGNAL;
+  evp.sigev_signo = SIGUSR1;
+  ret = timer_create (CLOCK_REALTIME,
+		      &evp,
+		      &timer);
+  if (ret)
+      perror ("timer_create");
+\end{lstlisting}
+
+\subsection{设置定时器}
+
+由timer\_create()建立的定时器是未设置的。可以使用timer\_settime()将其与一个过期时间关联并开始计时： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int timer_settime (timer_t timerid,
+		     int flags,
+		     const struct itimerspec *value,
+		     struct itimerspec *ovalue);
+\end{lstlisting}
+
+成功调用timer\_settime()将设置timerid指定的定时器的过期时间为value,value为一个timerspec结构体 
+
+\begin{lstlisting}
+  struct itimerspec {
+      struct timespec it_interval; /* next value */
+      struct timespec it_value; /* current value */
+  };
+\end{lstlisting}
+
+像setitimer()一样，it\_value指定了当前定时器过期时间。当定时器过期时，将用it\_interval的值更新it\_value。如果it\_interval是0，定时器就不是间歇定时器，并在it\_value 过期后停止运行。
+
+回顾一下之前提到的内容，timespec结构体可以提供纳秒级精度：
+
+\begin{lstlisting}
+  struct timespec {
+      time_t tv_sec; /* seconds */
+      long tv_nsec; /* nanoseconds */
+  };
+\end{lstlisting}
+
+如果flags是TIMER\_ABSTIME，value指定的时间则为绝对时间（和相对于当前时间值的默认解释相反）。这个修正的操作可以避免在获取当前时间、计算相对的时间差值、确定未来时间点、以及设置定时器时产生竞争条件。详情可以参见先前一节“一个高级的睡眠方法”。 
+
+如果ovalue不是NULL，之前定时器的过期时间将存储在itimerspec中。如果定时器之前未被设置，结构体的成员将全部设置为0。 
+
+使用timer值来初始化之前用timer\_create()初始化的定时器，下面的代码建立了一个每秒都过期的周期定时器： 
+
+\begin{lstlisting}
+  struct itimerspec ts;
+  int ret;
+
+  ts.it_interval.tv_sec = 1;
+  ts.it_interval.tv_nsec = 0;
+  ts.it_value.tv_sec = 1;
+  ts.it_value.tv_nsec = 0;
+
+  ret = timer_settime (timer, 0, &ts, NULL);
+  if (ret)
+      perror ("timer_settime");
+\end{lstlisting}
+
+\subsubsection{取得定时器的过期时间}
+
+你可以在任何时刻使用timer\_gettime()获取一个定时器的过期时间而不必重新设置它： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int timer_gettime (timer_t timerid,
+		     struct itimerspec *value);
+\end{lstlisting}
+
+成功调用timer\_gettime()将timerid指定的定时器过期时间存储到value指向的结构体中，并返回0。失败时，调用返回-1，并设置errno为下列值之一： 
+
+\begin{eqlist*}
+\item [EFAULT]
+value不是合法指针。
+\item [EINVAL]
+timerid不是合法定时器。 
+\end{eqlist*}
+
+看个例子： 
+
+\begin{lstlisting}
+  struct itimerspec ts;
+  int ret;
+
+  ret = timer_gettime (timer, &ts);
+  if (ret)
+      perror ("timer_gettime");
+  else {
+      printf ("current sec=%ld nsec=%ld\n",
+      ts.it_value.tv_sec, ts.it_value.tv_nsec);
+      printf ("next sec=%ld nsec=%ld\n",
+      ts.it_interval.tv_sec, ts.it_interval.tv_nsec);
+  }
+\end{lstlisting}
+
+
+\subsubsection{取得定时器的超时值}
+
+POSIX定义了一个接口来确定一个给定定时器目前的超时值： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int timer_getoverrun (timer_t timerid);
+\end{lstlisting}
+
+成功时，timer\_getoverrun()返回在定时器过期与实际定时器过期后通知(例如通过信号)进程间的多余时长。比方说，在我们先前的例子中，一个1毫秒的定时器运行了10毫秒，调用就会返回9。
+
+如果超时值大于等于DELAYTIMER\_MAX，调用就返回DELAYTIMER\_MAX。
+
+失败时，该函数返回-1，并设置errno为EINVAL，这个唯一的错误表明由timerid指定的定时器不合法。
+
+看个例子： 
+
+\begin{lstlisting}
+  int ret;
+
+  ret = timer_getoverrun (timer);
+  if (ret == -1)
+       perror ("timer_getoverrun");
+  else if (ret == 0)
+      printf ("no overrun\n");
+  else
+      printf ("%d overrun(s)\n", ret);
+\end{lstlisting}
+
+\subsubsection{删除定时器}
+
+删除一个定时器很简单： 
+
+\begin{lstlisting}
+  #include <time.h>
+
+  int timer_delete (timer_t timerid);
+\end{lstlisting}
+
+成功调用timer\_delete()将销毁由timerid指定的定时器，并返回0。失败时，调用返回-1，并设置errno为EINVAL，这个唯一的错误表明timerid不是合法的定时器。 
+

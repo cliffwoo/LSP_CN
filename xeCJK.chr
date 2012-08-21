@@ -1,0 +1,349 @@
+% -*- coding: utf-8 -*-
+% This is the file xeCJK.chr of the xeCJK package
+%   for typesetting Chinese/Japanese/Korean with XeLaTeX
+%
+% created by Wenchang Sun <sunwch@hotmail.com>
+%
+% Version 2.1.1 (17-July-2008)
+%
+% Copyright (C) Wenchang Sun <sunwch@hotmail.com>
+%
+% This file may be distributed and/or modified under the
+% conditions of the LaTeX Project Public License, either version 1.3
+% of this license or (at your option) any later version.
+% The latest version of this license is in
+%   http://www.latex-project.org/lppl.txt
+% and version 1.3 or later is part of all distributions of LaTeX
+% version 2005/12/01 or later.
+%
+%
+%\edef\xeCJKcatcodeat{\the\catcode`\@}% save catcode of @
+%\edef\xeCJKendlinechar{\the\endlinechar}% save endlinechar
+%\catcode`\@=11\relax
+%\endlinechar \m@ne
+
+\def\fileversion{2.1.1}
+\def\filedate{2008/07/17}
+\ProvidesFile{xeCJK.chr}[\filedate\space\fileversion]
+
+%\def\xeCJKglue{\hskip 0.1em plus 0.05em minus 0.05em $aa$}
+  
+% Output CJK fonts
+%
+\DeclareRobustCommand{\xeCJK@char}[1]{
+  {\XeTeXinterchartokenstate=0
+   \CJKsymbol{#1}
+   \xeCJK@CJKkern}
+   \xeCJK@ignorespaces}
+
+% for punctuation.
+\DeclareRobustCommand{\xeCJK@prepunctchar}[1]{
+ {\xeCJK@punctrule
+  \ifcsname @xeCJK@preglue#1\endcsname
+    \ifnum\lastkern>1\relax
+      \unkern
+      \unkern
+      \xeCJK@unskip
+      \csname @xeCJK@kern\@xeCJK@lastpunct#1\endcsname
+      \xeCJKpunctnobreak
+    \else
+      \xeCJK@ULspecials
+      \csname @xeCJK@preglue#1\endcsname
+    \fi
+
+    \global\edef\@xeCJK@lastpunct{#1}
+    \csname @xeCJK@prerule#1\endcsname
+
+    \XeTeXinterchartokenstate=0
+    \CJKpunctsymbol{#1}
+
+    \csname @xeCJK@postrule#1\endcsname
+    \nobreak
+  \else
+    \xeCJK@char{#1}
+  \fi
+  \gdef\xeCJK@lastcharclass{2}
+  \xeCJK@prepunctkern}
+  \ignorespaces}
+  
+\DeclareRobustCommand{\xeCJK@postpunctchar}[1]{
+ {\xeCJK@punctrule
+  \ifcsname @xeCJK@postglue#1\endcsname 
+    \ifnum\lastkern>1\relax
+      \unkern
+      \unkern
+      \xeCJK@unskip
+      \csname @xeCJK@kern\@xeCJK@lastpunct#1\endcsname
+      \nobreak
+    \else
+      \xeCJK@ULspecials
+      \ifcsname @xeCJK@punctbreak#1\endcsname
+        \CJKglue  % breakable
+      \else
+        \nobreak
+      \fi  
+    \fi
+
+    \global\edef\@xeCJK@lastpunct{#1}
+    \csname @xeCJK@prerule#1\endcsname
+
+    \XeTeXinterchartokenstate=0
+    \CJKpunctsymbol{#1}
+
+    \csname @xeCJK@postrule#1\endcsname
+    \csname @xeCJK@postglue#1\endcsname
+  \else
+    \xeCJK@char{#1}
+  \fi
+  \gdef\xeCJK@lastcharclass{3}
+  \xeCJK@postpunctkern}
+  \xeCJK@ignorespaces}
+
+\let\xeCJK@unskip\unskip
+\def\xeCJK@UL@unskip{
+  \hskip\csname xeCJK@punctglue@\@xeCJK@lastpunct\endcsname\relax}
+
+\def\xeCJKallowbreakbetweenpuncts{
+  \def\xeCJKpunctnobreak{
+    \ifnum\xeCJK@lastcharclass=3
+      \hskip 0pt
+    \fi}}
+    
+\def\xeCJKnobreakbetweenpuncts{
+  \let\xeCJKpunctnobreak\nobreak}
+\xeCJKnobreakbetweenpuncts
+
+\def\@xeCJK@kern#1#2 #3\relax{
+  \ifdim #3em=\z@ 
+    \global\expandafter\let\csname  @xeCJK@kern#1#2\endcsname\relax
+  \else
+    \expandafter\gdef\csname  @xeCJK@kern#1#2\endcsname{
+      \kern #3em}
+  \fi}
+\let\UTFkern\@xeCJK@kern
+
+\def\xeCJK@punct#1 #2 #3 #4 #5 #6 #7\relax{
+  \ifnum #2=1\relax
+    \XeTeXcharclass `#1 3\relax
+  \else
+    \XeTeXcharclass `#1 2\relax
+  \fi
+  % glue and nobreak flag before a punct char
+   \@xeCJK@before@punct{#1}{}#2 #4\relax
+  % glue and nobreak flag after a punct char
+   \@xeCJK@after@punct{#1}{}#5 #7\relax
+  % zero-height rule added before a punct char
+  \ifdim #3\p@ = \z@
+    \global\expandafter\let\csname
+      @xeCJK@prerule#1\endcsname=\relax
+  \else
+    \global\expandafter\def\csname @xeCJK@prerule#1\endcsname{
+      \vrule width #3em depth \z@ height \z@}
+  \fi
+
+  % zero-height rule added after a punct char
+  \ifdim #6\p@ = \z@
+    \global\expandafter\let\csname
+      @xeCJK@postrule#1\endcsname=\relax
+  \else
+    \global\expandafter\def\csname
+      @xeCJK@postrule#1\endcsname{
+        \vrule width #6em depth \z@ height \z@}
+  \fi}
+\let\UTFpunct\xeCJK@punct
+
+\def\UTFraisechar#1 #2\relax{
+  \expandafter\gdef\csname xeCJK@raise@#1\endcsname{#2 em}}
+
+\def\@xeCJK@before@punct#1#2#3 #4,#5,#6,#7\relax{
+  \ifnum #3#4=\z@
+    \global\expandafter\def\csname @xeCJK@preglue#1\endcsname{
+      \ifnum\lastkern<2\relax
+        \nobreak
+      \fi}
+  \else
+    \if #31\relax
+      \global\expandafter\def\csname @xeCJK@preglue#1\endcsname{
+        \nobreak}
+    \else
+      \global\expandafter\def\csname @xeCJK@preglue#1\endcsname{
+        \ifnum\lastkern<2\relax
+          \nobreak
+        \fi
+        \hskip #5em plus #6em minus #7em\relax}
+    \fi   
+  \fi}
+
+\def\@xeCJK@after@punct#1#2#3 #4,#5,#6,#7\relax{
+  \ifnum #3#4=\z@
+    \global\expandafter\let\csname @xeCJK@postglue#1\endcsname=\relax
+  \else
+    \if #41\relax
+      \global\expandafter\def\csname @xeCJK@postglue#1\endcsname{
+        \hskip #5em plus #6em minus #7em}
+    \else
+      \global\expandafter\def\csname @xeCJK@postglue#1\endcsname{
+        \nobreak}
+    \fi
+    \global\expandafter\def\csname xeCJK@punctglue@#1\endcsname{
+       -#5em}     
+  \fi}
+
+\IfFileExists{cjkdefkern.cfg}
+    {\input{cjkdefkern.cfg}}
+    {\typeout{Warning: config file cjkdefkern.cfg not found.}}
+                                
+\def\xeCJK@Currenttblbase{}
+\def\xeCJK@punctrule{
+  \xeCJK@gettblbase
+  \ifx\xeCJK@tblbase\xeCJK@Currenttblbase
+  \else
+    \ifcsname xeCJK@\xeCJK@tblbase\endcsname
+    \else
+      \IfFileExists{\xeCJK@tblbase.tbl}
+        {\edef\xeCJK@temp{\xeCJK@tblbase.tbl}}
+        {\edef\xeCJK@temp{\xeCJK@language\xeCJK@pstyle def.tbl}
+         \global\expandafter\def\csname xeCJK@\xeCJK@tblbase\endcsname{
+            \csname xeCJK@\xeCJK@language\xeCJK@pstyle def\endcsname}
+         \typeout{Warning: \xeCJK@tblbase.tbl not found, using 
+            \xeCJK@temp\space instead.}}
+
+      \bgroup
+        \catcode`\\=0 \catcode`\%= 14 \catcode`\^^Z=10
+        \catcode`\^^I=10 \catcode`\ =10 \catcode`\^^M=5
+        \catcode`\@=11
+        \catcode`.=12 \catcode`,=12 \catcode`-=12 \catcode`+=12
+        \catcode`0=12 \catcode`1=12 \catcode`2=12 \catcode`3=12
+        \catcode`4=12 \catcode`5=12 \catcode`6=12 \catcode`7=12
+        \catcode`8=12 \catcode`9=12
+        \catcode`\{=1 \catcode`\}=2
+        \@tempcnta="40
+        \loop
+          \advance\@tempcnta 1\relax
+          \catcode\@tempcnta=11\relax
+          \ifnum\the\@tempcnta<"5A\repeat
+        
+        \@tempcnta="60
+        \loop
+          \advance\@tempcnta 1\relax
+          \catcode\@tempcnta=11\relax
+          \ifnum\the\@tempcnta<"7A\repeat        
+
+        \IfFileExists{\xeCJK@temp}
+          {\input{\xeCJK@temp}}
+          {\typeout{Warning: File \xeCJK@temp\space not found.}}
+      \egroup
+
+    \fi
+    \csname xeCJK@\xeCJK@tblbase\endcsname
+    \global\let\xeCJK@Currenttblbase\xeCJK@tblbase
+  \fi}
+
+\def\xeCJK@gettblbase{
+  \ifcsname tblbase\xeCJK@pstyle @\xeCJK@family/\f@series/\f@shape\endcsname
+    \edef\xeCJK@tblbase{\csname
+      tblbase\xeCJK@pstyle @\xeCJK@family/\f@series/\f@shape\endcsname}
+  \else
+    {\csname xeCJK@font@\xeCJK@family\endcsname
+    \get@external@font
+    \global\let\xeCJK@tempx\external@font}
+    \expandafter\xeCJK@@gettblbase\xeCJK@tempx\relax
+    \global\expandafter\edef\csname
+       tblbase\xeCJK@pstyle @\xeCJK@family/\f@series/\f@shape\endcsname{\xeCJK@tblbase}
+  \fi}
+
+\def\xeCJK@@gettblbase"#1/#2"#3\relax{
+  \edef\xeCJK@temp{\xeCJK@language\xeCJK@pstyle\zap@space #1 \@empty}
+  \edef\xeCJK@temp{\lowercase{\def\noexpand\xeCJK@tblbase{\xeCJK@temp}}}
+  \xeCJK@temp
+  \def\temp{}
+  \expandafter\xeCJK@stringtoascii\xeCJK@tblbase[]
+  \edef\xeCJK@tblbase{\temp}}
+  
+\def\xeCJK@stringtoascii#1{
+  \ifnum\number`#1>127\relax
+    \edef\temp{\temp\number`#1}
+  \else
+    \edef\temp{\temp\string#1}
+  \fi
+  \@ifnextchar[{\xeCJK@gobbletwo}{\xeCJK@stringtoascii}}
+
+\def\xeCJK@gobbletwo[]{}
+  
+\def\punctstyle#1{
+  \ifcsname xeCJK@ps@#1\endcsname
+    \edef\xeCJK@pstyle{\csname xeCJK@ps@#1\endcsname}
+    \ifcsname xeCJK@raisechar@\xeCJK@language\xeCJK@pstyle\endcsname
+      \let\xeCJK@raisechar\xeCJK@@raisechar
+    \else
+      \let\xeCJK@raisechar\relax
+    \fi
+  \else
+    \typeout{Warning: Punctstyle #1\space is not defined.}
+  \fi}
+
+\def\xeCJK@@raisechar#1{
+  \ifcsname xeCJK@raise@#1\endcsname
+    \raise\csname xeCJK@raise@#1\endcsname\hbox{#1}
+  \else
+    #1
+  \fi}
+
+\def\xeCJK@raisechar@chtz{}
+
+\def\xeCJK@ps@kaiming{k}
+\def\xeCJK@ps@banjiao{b}
+\def\xeCJK@ps@hangmobanjiao{h}
+\def\xeCJK@ps@quanjiao{q}
+\def\xeCJK@ps@juzhong{z}
+\def\xeCJK@ps@CCT{c}
+\punctstyle{CCT}
+
+
+
+\let\@afterindentfalse\relax
+
+\def\zhcnparindent{}
+
+\def\xeCJKplainchr{
+  \def\xeCJK@char##1{
+    {\XeTeXinterchartokenstate=0
+     \CJKsymbol{##1}
+     \xeCJK@CJKkern}
+     \xeCJK@ignorespaces}
+  %
+  % for punctuation.
+  \def\xeCJK@prepunctchar##1{
+    {\ifodd\lastkern
+       \CJKglue
+     \else
+       \ifnum\lastkern=2\relax
+         \CJK@nobreakglue
+       \fi    
+     \fi  
+     \XeTeXinterchartokenstate=0
+     \CJKpunctsymbol{##1}
+     \xeCJK@prepunctkern}
+     \ignorespaces}
+  %
+  %
+  \def\xeCJK@postpunctchar##1{
+    \CJK@nobreakglue
+    {\XeTeXinterchartokenstate=0
+     \CJKpunctsymbol{##1}
+     \xeCJK@postpunctkern}
+     \xeCJK@ignorespaces}}
+
+\def\UTFpunctbreak#1{
+  \expandafter\gdef\csname @xeCJK@punctbreak#1\endcsname{}}
+
+%\endlinechar=\xeCJKendlinechar
+
+ 
+
+\def\xeCJK@gobbleone#1{}
+
+%\catcode`\@=\xeCJKcatcodeat
+
+
+

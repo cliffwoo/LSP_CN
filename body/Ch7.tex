@@ -1,0 +1,1485 @@
+\ifx\atempxetex\usewhat
+\XeTeXinputencoding "utf-8"
+\fi
+\defaultfont
+
+\chapter{文件与目录管理}
+
+在第2，3以及第4章中，我们给出了大量文件I/O的方法和系统调用。在本章，我们再次回到这个主题上来，但这次的重点不是文件读写，而是操作和管理文件及其元数据。
+
+\section{文件及其元数据}
+
+正如我们在第1章讨论的，每个文件均对应一个inode，它是由文件系统中唯一数值（被称为inode号）编址。inode既是位于类unix文件系统的物理对象，又是在Linux内核数据结构描述的概念实体。inode存储了与文件有关的元数据，例如文件的访问权限，最后访问时间，所有者，群组，大小以及文件数据的存储位置。 
+
+你能使用ls命令的-i选项来获取一个文件inode编号：
+
+\begin{tabular}{llll}
+\$ ls -i & & &\\
+1689459 Kconfig & 1689461 main.c & 1680144 process.c & 1689464 swsusp.c\\
+1680137 Makefile & 1680141 pm.c & 1680145 smp.c & 1680149 user.c\\
+1680138 console.c & 1689462 power.h & 1689463 snapshot.c & \\
+1689460 disk.c & 1680143 poweroff.c & 1680147 swap.c & \\
+\end{tabular}
+
+该输出结果表示，例如文件disk.c的inode编号是1689460。在该文件系统中，不会有其他任何文件拥有该inode编号(inode number)。但在其他文件系统中，我们不能保证有同样的inode编号。 
+
+\subsection{一组stat函数}
+
+Unix提供了一组获取文件元数据的函数：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <unistd.h>
+  int stat (const char *path, struct stat *buf);
+  int fstat (int fd, struct stat *buf);
+  int lstat (const char *path, struct stat *buf);
+\end{lstlisting}
+
+这些函数均返回文件的信息。stat()返回由路径path参数指明的文件信息，而fstat()返回由文件描述符fd指向的文件信息。lstat()与stat()类似，但是对于符号链接，lstat()返回链接本身而非目标文件。
+
+这些函数均在结构stat中存储了获取的文件信息。结构stat在<bits/stat.h>中定义，但真正的定义是包含在<sys/stat.h>中的：
+
+\begin{lstlisting}
+  struct stat {
+    dev_t st_dev; /* ID of device containing file */
+    ino_t st_ino; /* inode number */
+    mode_t st_mode; /* permissions */
+    nlink_t st_nlink; /* number of hard links */
+    uid_t st_uid; /* user ID of owner */
+    gid_t st_gid; /* group ID of owner */
+    dev_t st_rdev; /* device ID (if special file) */
+    off_t st_size; /* total size in bytes */
+    blksize_t st_blksize; /* blocksize for filesystem I/O */
+    blkcnt_t st_blocks; /* number of blocks allocated */
+    time_t st_atime; /* last access time */
+    time_t st_mtime; /* last modification time */
+    time_t st_ctime; /* last status change time */
+  };
+\end{lstlisting}
+
+下面是对结构体字段的详细解释：
+
+\begin{itemize}
+\item 字段st\_dev描述了文件位于什么设备节点上（我们在本章稍后将讨论设备节点）。如果文件不在本地设备上——例如，如果文件在网络文件系统(NFS)上—该值为0。
+\item 字段st\_ino为文件的inode编号。
+\item 字段st\_mode为文件的权限字段。第1章和第2章已讨论各权限位和权限的内容。
+\item 字段st\_nlink为指向文件的硬链接数。每个文件至少有一个硬链接。
+\item 字段st\_uid为文件所有者的用户ID。
+\item 字段st\_gid为文件所属组ID。
+\item 如果文件是设备节点，字段st\_rdev描述了该设备节点信息。
+\item 字段st\_size提供文件字节数。
+\item 字段st\_blksize为进行有效文件I/O的首选块大小。该值（或该值倍数）为用户缓冲I/O的最佳块大小（见第3章）。
+\item 字段st\_blocks为分配给文件的块数目。当文件有洞时（也就是说该文件是一个稀疏文件）该值将小于st\_size值。
+\item 字段st\_atime为最后文件访问时间。这是文件被访问的最近时间（例如，通过read()或execle()）。
+\item 字段st\_mtime包含最后文件修改时间—那就是，文件最后一次被写入的时间。
+\item 字段st\_ctime包含最后文件状态改变时间。该字段常被误解为非维护在Linux或其他类Unix系统的文件创建时间。该字段实际上描述的是文件的元数据（例如文件所有者或权限）被改变的最后时间。
+\end{itemize}
+
+成功时，三个调用均返回0，并将文件元数据保存在stat结构体中。错误时，它们返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对path指定的目录的某一部分的搜索权限（仅适用于stat()和lstat()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于fstat()）。
+\item[\textbf{EFAULT}] 无效的path或buf指针。
+\item[\textbf{ELOOP}] path包含太多符号链接（仅适用于stat()和lstat()）。
+\item[\textbf{ENAMETOOLONG}] 路径名(path)太长（仅适用于stat()和lstat()）。
+\item[\textbf{ENOENT}] path中的某个目录或者文件不存在（仅适用于stat()和lstat()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] path指向的路径名不是目录（仅适用于stat()和lstat()）。
+\end{eqlist*}
+
+下列程序使用stat()获取文件(文件在命令行参数中指定)的大小：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <unistd.h>
+  #include <stdio.h>
+  int main (int argc, char *argv[])
+  {
+    struct stat sb;
+    int ret;
+    if (argc < 2) {
+      fprintf (stderr, "usage： %s <file>\n", argv[0]);
+      return 1;
+    }
+    ret = stat (argv[1], &sb);
+    if (ret) {
+      perror ("stat");
+      return 1;
+    }
+    printf ("%s is %ld bytes\n", argv[1], sb.st_size);
+    return 0;
+  }
+\end{lstlisting}
+
+这是程序运行在自己源文件上的结果：
+
+\begin{verbatim}
+  $ ./stat stat.c
+  stat.c is 392 bytes
+\end{verbatim}
+
+以下代码片段，使用fstat()确认已经打开的文件是否在物理（或与之相对的网络）设备上：
+
+\begin{lstlisting}
+ /*
+  * is_on_physical_device – returns a positive
+  * integer if 'fd' resides on a physical device,
+  * 0 if the file resides on a nonphysical or
+  * virtual device (e.g., on an NFS mount), and
+  * -1 on error.
+  */
+  int is_on_physical_device (int fd)
+  {
+    struct stat sb;
+    int ret;
+    ret = fstat (fd, &sb);
+    if (ret) {
+      perror ("fstat");
+      return -1;
+    }
+    return gnu_dev_major (sb.st_dev);
+  }
+\end{lstlisting}
+
+\subsection{权限}
+
+系统调用stat常用于获取给定文件的权限，而使用下面两个系统调用设置那些值：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  int chmod (const char *path, mode_t mode);
+  int fchmod (int fd, mode_t mode);
+\end{lstlisting}
+
+chmod()和fchmod()均可设置文件权限为mode。使用chmod()，path指明需要修改的文件的相对或绝对路径名。对于fchmod()，文件是由文件描述符fd给定。
+
+类型mode\_t(该类型为整型)表示的mode合法值与由结构stat中字段st\_mode返回的值一样。虽然都是简单整数值，他们对每种Unix实现的含义都是不同的。所以，POSIX定义了各种代表权限的常量集(详见第2章“新文件的权限”)。这些常量能通过二进制或运算形成mode合法值。例如， (S\_IRUSR | S\_IRGRP)同时设置了文件拥有者和所属群组的可读权限。
+
+为改变文件的权限，调用chmod()或fchmod()的进程有效ID必须匹配文件所有者，或者进程必须具有CAP\_FOWNER能力。
+
+成功时，两者均返回0。失败时，均返回-1，并使用下列错误值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录组成的搜索权限（仅适用于chmod()）。
+\item[\textbf{EBADF}] 无效的文件描述符fd（仅适用于fchmod()）。
+\item[\textbf{EFAULT}] 无效的path指针（仅适用于chmod()）。
+\item[\textbf{EIO}] 文件系统发生内部I/O错误。这是遇到的很严重的错误；它表明损坏的磁盘或文件系统。
+\item[\textbf{ELOOP}] 内核解析path时遇到太多符号链接（仅适用于chmod()）。
+\item[\textbf{ENAMETOOLONG}] path太长（仅适用于chmod()）。
+\item[\textbf{ENOENT}] path不存在（仅适用于chmod()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] path路径中某部分不是目录（仅适用于chmod()）。
+\item[\textbf{EPERM}] 调用的进程有效ID与文件所有者不匹配，且进程缺少CAP\_FOWNER能力。
+\item[\textbf{EROFS}] 文件位于只读文件系统上。
+\end{eqlist*}
+
+这段代码将文件map.png权限设置所有者可读可写：
+
+\begin{lstlisting}
+  int ret;
+ /*
+  * Set 'map.png' in the current directory to
+  * owner-readable and -writable. This is the
+  * same as 'chmod 600 ./map.png'.
+  */
+  ret = chmod ("./map.png", S_IRUSR | S_IWUSR);
+  if (ret)
+    perror ("chmod");
+\end{lstlisting}
+
+这段代码与上段代码功能一样，并假定用fd指向打开的文件map.png：
+
+\begin{lstlisting}
+  int ret;
+ /*
+  * Set the file behind 'fd' to owner-readable
+  * and -writable.
+  */
+  ret = fchmod (fd, S_IRUSR | S_IWUSR);
+  if (ret)
+    perror ("fchmod");
+\end{lstlisting}
+
+chmod()和fchmod()均对所有现代Unix系统可用。POSIX要求使用前者，而后者可选。 
+
+\subsection{所有权}
+
+在stat结构中，字段st\_uid和st\_gid分别提供文件的所有者和所属群。以下三个系统调用允许用户改变那两个值：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <unistd.h>
+  int chown (const char *path, uid_t owner, gid_t group);
+  int lchown (const char *path, uid_t owner, gid_t group);
+  int fchown (int fd, uid_t owner, gid_t group);
+\end{lstlisting}
+
+chown()和lchown()设置由路径path指定的文件的所有权。它们作用一样，除非文件是个符号链接：前者沿着符号链接并改变链接目标而不是链接本身的所有权，而lchown()并不沿着符号链接，因此只改变符号链接文件的所有权。fchown()设置了由文件描述符fd代表的文件所有权。 
+
+成功时，所有三个调用都设置文件所有者为owner，设置文件所属群组为group，并返回0。如果字段owner或group为-1，说明值没有设定。只有具有CAP\_CHOWN能力的进程（通常是root进程）可能改变文件的所有者。文件所有者可以将文件所属组设置为任何用户所属组；具有 CAP\_CHOWN能力的进程能改变文件所属群为任何值。 
+
+失败时，调用均返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录的搜索权限（仅适用于chown()和lchown()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于fchown()）。
+\item[\textbf{EFAULT}] 无效的path（仅适用于chown()和lchown()）。
+\item[\textbf{EIO}] 发生内部I/O错误(这很严重)。
+\item[\textbf{ELOOP}] 内核在解析path时遇到太多符号链接（仅适用于chown()和lchown()）。 
+\item[\textbf{ENAMETOOLONG}] path太长（仅适用于chown()和lchown()）)。
+\item[\textbf{ENOENT}] 文件不存在。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path中的某部分不是目录（仅适用于chown()和lchown()）。
+\item[\textbf{EPERM}] 调用的进程缺少必要的权限，无法按要求改变所有者或所属群组。
+\item[\textbf{EROFS}] 只读的文件系统。
+\end{eqlist*}
+
+这段代码在当前工作目录下改变文件manifest.txt的所属群为officers。为了使操作成功，调用的用户必须具备CAP\_CHOWN能力或必须是用户kidd且其在officers群组中：
+
+\begin{lstlisting}
+  struct group *gr;
+  int ret;
+ /*
+  * getgrnam( ) returns information on a group
+  * given its name.
+  */
+  gr = getgrnam ("officers");
+  if (!gr) {
+    /* likely an invalid group */
+    perror ("getgrnam");
+    return 1;
+  }
+  /* set manifest.txt's group to 'officers' */
+  ret = chown ("manifest.txt", -1, gr->gr_gid);
+  if (ret)
+    perror ("chown");
+\end{lstlisting}
+
+操作之前，文件所属群是crew：
+
+\begin{verbatim}
+  $ ls –l
+  -rw-r--r-- 1 kidd crew 13274 May 23 09:20 manifest.txt
+\end{verbatim}
+
+操作之后，赋予了officers组以权限：
+
+\begin{verbatim}
+  $ ls –l
+  -rw-r--r-- 1 kidd officers 13274 May 23 09:20 manifest.txt
+\end{verbatim}
+
+文件的所有者kidd不会被改变，因为代码部分传递-1给uid。以下函数将fd指向的文件的所有者和群组设置为root：
+
+\begin{lstlisting}
+ /*
+  * make_root_owner - changes the owner and group of the file
+  * given by 'fd' to root. Returns 0 on success and -1 on
+  * failure.
+  */
+  int make_root_owner (int fd)
+  {
+    int ret;
+    /* 0 is both the gid and the uid for root */
+    ret = fchown (fd, 0, 0);
+    if (ret)
+      perror ("fchown");
+    return ret;
+  }
+\end{lstlisting}
+
+调用的进程必须具有CAP\_CHOWN能力。如果进程具有和CAP\_CHOWN一样的能力，这往往意味着该进程为root所拥有。
+
+\subsection{扩展属性}
+
+\emph{扩展属性}(也称作\emph{xattrs})提供一种永久地把文件与键/值对相关联的机制。本章中，我们已经讨论了各种与文件关联的键/值元数据的情况：文件的大小，所有者，最后修改时间戳等等。扩展属性允许已有文件系统支持最初设计中未实现的新特性，例如出于安全目的的强制访问控制。扩展属性很有趣的一个特性是用户空间应用可能任意地创建和读写键/值。
+
+扩展属性是与文件系统无关的，这样应用程序使用标准接口操作它们；接口对所有文件系统都没有区别。这样，应用程序在使用扩展属性时无需考虑文件所在的文件系统，或文件系统如何内部存储键与值。但扩展属性的实现是与文件系统相关的。不同的文件系统以不同的方式存储扩展属性，但内核隐藏了这些差别，把它们从扩展属性接口抽象出来。
+
+例如ext3文件系统，在文件inode的空闲空间存储其扩展属性。\footnote[1]{当然，在inode空间用完之后，ext3在额外的文件系统块存储扩展属性。更老版本的ext3缺少该''inode内置''的扩展属性特性。}该特性使读取文件属性非常快。因为无论何时应用程序访问文件，包含inode的文件系统块会从磁盘被读入内存，因此扩展属性“自动地”被读入内存，且被访问时没有额外的开销。
+
+其他文件系统，例如FAT和minixfs，根本不支持扩展属性。当对其上的文件调用扩展属性时，这些文件系统则返回ENOTSUP。
+
+\subsubsection{键与值}
+
+每个扩展属性都对应一个唯一的键(\emph{key})。键必须是合法的UTF-8字符。它们采用namespace.attribute的形式。每一个键均需通过验证；那就是说，它必须起始于一个有效的命名空间，并接着一个句点。一个有效的键名的例子是user.mime\_type；该键的命名空间是user，属性名是mime\_type。
+
+键可能已定义，或者未定义。如果一个键已定义，其值可能是空或是非空。也就是说，未定义键与已定义但未指定值的键之间是有区别的。正如我们看到的，这意味着删除一个键需要特殊的接口（仅仅指派一个空值是不够的）。
+
+与键相关联的值，如果非空，可能是任意的字节序列。因为值没有限定是字符串，它没必要以'\textbackslash0'结尾，尽管当你选用C 字符串存储键值时以'\textbackslash0'结尾很合理。既然值不保证以'\textbackslash0'结尾，所有对扩展属性的操作需要该值的长度。当读取属性时，内核提供长度；当写入属性时，你必须提供属性长度。
+
+\begin{center}
+\begin{boxedminipage}{\textwidth}
+\begin{center}\textbf{存储MIME类型的更好方式}\end{center}
+GUI文件管理器，例如GNOME's Nautilus，对不同类型的文件有不同处理：不同的图标，不同默认点击行为、不同的可执行操作列表等等。为实现这些，文件管理器必须知道每个文件的格式。为确定文件格式，Windows文件系统只是简单地查看文件的扩展名。但出于传统和安全的双重原因，Unix系统倾向于检查文件并解释其类型。该进程被称作MIME类型监听（MIME type sniffing）。
+
+一些文件管理器运行时产生该信息；其它管理器产生一次信息，之后缓存它。那些缓存的信息倾向于放入自定义的数据库中。文件管理器必须保证文件在无需了解文件管理器的情况下与该数据库同步。一个比较好的方法是放弃自定义的数据库而在扩展属性中存储这些的元数据：这样使得维护更简单， 访问更快速，且易于被任何应用程序访问。
+\end{boxedminipage}
+\end{center}
+
+Linux对键的数目，键的长度，值的大小，或被与文件相关联的所有键与值消耗的空间大小上都没有任何限制。但在文件系统上却有实际的限制。这些限制通常体现在与给定文件相关联的所有键与值的总长度上。
+
+例如ext3，对给定文件的所有扩展属性必须适合文件inode的剩余空间，最多达到一个额外的文件系统块大小。（更老版本的ext3限制在一个文件系统块，而不再在inode内保存。）这个限制依赖于文件系统的块大小，相当于每个文件实际限制是从1KB至8KB。而在XFS中，则没有实际限制。由于大多数键与值都是较短的文本字符串，在ext3总这些限制也不是问题。尽管如此，在文件扩展属性中存储项目的整个修订历史之前要三思而后行！ 
+
+\subsubsection{扩展属性命名空间}
+
+与扩展属性相关联的命名空间不仅仅是组织的工具。依赖于命名空间，内核执行不同访问策略。
+
+Linux当前定义四种扩展属性命名空间，且可能在将来定义更多。目前四种分别是： 
+
+\begin{eqlist*}
+\item[\emph{system}] 命名空间system通常利用扩展属性实现内核特性，例如访问控制列表（ACLs）。一个该命名空间扩展属性的例子是 system.posix\_acl\_access。无论用户读取或者写入这些属性都依赖于相应位置的安全模块。假定最糟糕的情况是没有用户（包括 root）能读取这些属性。
+\item[\emph{security}] 命名空间security通常实现安全模块，例如SELinux。用户空间应用程序访问这些属性也依赖于相应位置的安全模块。默认情况下，所有进程能读取这些属性，但只有具有CAP\_SYS\_ADMIN能力的进程能写入它们。 
+\item[\emph{trusted}] 命名空间trusted存储用户空间限制的信息。只有具有CAP\_SYS\_ADMIN能力的进程能读写这些属性。
+\item[\emph{user}] 命名空间user是为普通进程使用的标准命名空间。内核通过普通文件权限比特控制访问该命名空间。为从存在的键中读取值，进程必须具有给定文件的读权限。为创建一个新键，或向已有的键写入值，进程必须具有给定文件的写权限。只能对普通文件用户命名空间指派扩展属性，符号链接或设备文件则不可以。当设计一个能使用扩展属性的用户空间应用程序时，这恰恰就是你想要的命名空间。 
+\end{eqlist*}
+
+\subsubsection{扩展属性操作}
+
+POSIX定义四种应用程序对给定文件扩展属性执行的操作：
+
+\begin{itemize}
+\item 给定文件和键，返回相应的值。
+\item 给定文件，键与值，对键赋值。
+\item 给定文件，返回文件所有已指派值的扩展属性键的列表。
+\item 给定文件与键，从文件中移除该扩展属性。
+\end{itemize}
+
+对每个操作，POSIX提供三个系统调用：
+
+\begin{itemize}
+\item 操作给定路径名的系统调用；如果路径指向符号链接，链接的目标文件会被操作（通常行为）。
+\item 操作给定路径名的系统调用；如果路径指向符号链接，链接本身会被操作（一般为以''l''开头的系统调用）。
+\item 操作文件描述符的系统调用（一般为以''f''开头的系统调用）。 
+\end{itemize}
+
+接下来，我们将讨论所有12种排列。 
+
+\textbf{检索扩展属性。}最简单的操作是返回文件扩展属性给定键的值：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <attr/xattr.h>
+  ssize_t getxattr (const char *path, const char *key, void *value, size_t size);
+  ssize_t lgetxattr (const char *path, const char *key, void *value, size_t size);
+  ssize_t fgetxattr (int fd, const char *key, void *value, size_t size);
+\end{lstlisting}
+
+getxattr()调用成功后，会将路径为path的文件中名字为key的扩展属性保存到缓冲区value中，该缓冲区的长度为size个字节。函数返回值为该值的实际大小。
+
+如果size是0，调用返回该值的大小，但不将它存至缓冲区value。使用“0”，可以使应用程序确认存储键值的缓冲区的长度是否合适。获知这个大小后，应用程序会按需分配或调整缓冲区。
+
+lgetxattr()与getxattr()行为一致。只是当路径为符号链接时，返回的是链接本身而不是链接目标文件的扩展属性。大家回顾一下之前的讨论， 我们知道用户命名空间的属性不能被应用在符号链接上。因此，该调用很少被使用。
+
+fgetxattr()操作文件描述符fd；其他方面，它与getxattr()行为一致。
+
+错误时，所有三个调用返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录的搜索权限（仅适用于getxattr()和lgetxattr()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于fgetxattr()）。
+\item[\textbf{EFAULT}] 无效的path, key或value指针。
+\item[\textbf{ELOOP}] 路径path中包含太多符号链接（仅适用于getxattr()和lgetxattr()）)。
+\item[\textbf{ENAMETOOLONG}] 路径path太长（仅适用于getxattr()和lgetxattr()）。
+\item[\textbf{ENOATTR}] 属性key不存在，或进程没有访问属性的权限。
+\item[\textbf{ENOENT}] 路径path中的某部分不存在（仅适用于getxattr()和lgetxattr()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path中的某个部分不是目录（仅适用于getxattr()和lgetxattr()）。
+\item[\textbf{ENOTSUP}] path或fd所在的文件系统不支持扩展属性。
+\item[\textbf{ERANGE}] size太小，缓冲区无法保存键值。就像之前讨论的，调用可能将size设置为0；返回值将指明需要的缓存大小，并对value做适当地调整。
+\end{eqlist*}
+
+\textbf{设置扩展属性。}下面三个系统调用设置给定的扩展属性：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <attr/xattr.h>
+  int setxattr (const char *path, const char *key, const void *value, size_t size, int flags);
+  int lsetxattr (const char *path, const char *key, const void *value, size_t size, int flags);
+  int fsetxattr (int fd, const char *key, const void *value, size_t size, int flags);
+\end{lstlisting}
+
+setxattr()会设置文件path的扩展属性key为value，value的长度为size字节。字段flags修改调用的行为。如果flags是 XATTR\_CREATE，当扩展属性已存在时调用将失败。如果flags是XATTR\_REPLACE，当扩展属性不存在时调用将失败。默认的行为—当 flags是0时执行—同时允许创建和替换。不管flags值的话，除了key之外，对其他键均无影响。
+
+lsetxattr()与setxattr()行为一致，只是当path是符号链接，它会设置链接本身而不是链接目标文件的扩展属性。回顾一下之前的讨论， 我们知道用户命名空间的属性不能被应用在符号链接上。因此，该调用很少被使用。
+
+fsetxattr()操作文件描述符fd；其他方面，它与setxattr()行为一致。
+
+成功时，所有三个系统调用返回0；失败时，调用返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录的搜索权限（仅适用于setxattr()和lsetxattr()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于fsetxattr()）。
+\item[\textbf{EDQUOT}] 由于配额限制，阻止请求操作使用空间。
+\item[\textbf{EEXIST}] flags设置为XATTR\_CREATE，且给定文件中的key已存在。
+\item[\textbf{EFAULT}] 无效的path, key或value指针。
+\item[\textbf{EINVAL}] 无效的flags。
+\item[\textbf{ELOOP}] 路径path中包含太多符号链接（仅适用于setxattr()和lsetxattr()）。
+\item[\textbf{ENAMETOOLONG}] 路径path太长（仅适用于setxattr()和lsetxattr()）。
+\item[\textbf{ENOATTR}] flags设置为XATTR\_REPLACE，且给定的文件中不存在key。
+\item[\textbf{ENOENT}] 路径path中的某部分不存在（仅适用于setxattr()和lsetxattr()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOSPC}] 文件系统剩余空间不足，无法存储扩展属性。
+\item[\textbf{ENOTDIR}] 路径path中某部分不是目录（仅适用于setxattr()和lsetxattr()）。
+\item[\textbf{ENOTSUP}] path或fd所在的文件系统不支持扩展属性。
+\end{eqlist*}
+
+\textbf{列出文件的扩展属性。}下面三个系统调用列出给定文件扩展属性集：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <attr/xattr.h>
+  ssize_t listxattr (const char *path, char *list, size_t size);
+  ssize_t llistxattr (const char *path, char *list, size_t size);
+  ssize_t flistxattr (int fd, char *list, size_t size);
+\end{lstlisting}
+
+成功调用listxattr(),返回一个与路径path指定的文件相关联的扩展属性键列表。该列表存储在list指向的长度为size字节的缓冲区中。系统调用返回列表的实际字节大小。
+
+list中的每个扩展属性键是以'\textbackslash0'结尾的，因此列表可能看起来像这样：
+
+\begin{verbatim}
+  "user.md5_sum\0user.mime_type\0system.posix_acl_default\0"
+\end{verbatim}
+
+因此，虽然每个键都是一个传统的、以'\textbackslash0'结尾的C字符串，但为遍历键列表，你仍需要整个列表的长度（你能从调用的返回值中获得该值）。为确定所需缓冲区的大小，设置size为0并调用任意一个列表的函数；函数将返回整个键列表的实际长度。像调用getxattr()一样，应用程序可能使用这个功能来分配或调整缓冲区。
+
+llistxattr()与listxattr()行为一致，只是当path为符号链接时，它会列出与链接本身而不是链接目标文件相关联的扩展属性。回顾以下之前的讨论，用户命名空间的属性不能被应用于符号链接—因此，该调用很少被使用。
+
+flistxattr()操作文件描述符fd；其它方面，它与listxattr()行为一致。
+
+失败时，所有三个调用返回-1，并使用下列错误代码设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录的搜索权限（仅适用于listxattr()和llistxattr()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于flistxattr()）。
+\item[\textbf{EFAULT}] 无效的path或list指针。
+\item[\textbf{ELOOP}] 路径path中包含太多符号链接。（仅适用于listxattr()和llistxattr()）。
+\item[\textbf{ENAMETOOLONG}] path过长（仅适用于listxattr()和llistxattr()）。
+\item[\textbf{ENOENT}] 路径path中的某个部分不存在（仅适用于listxattr()和llistxattr()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path中某部分不是目录（仅适用于listxattr()和llistxattr()）。
+\item[\textbf{ENOTSUPP}] path或fd所在的文件系统不支持扩展属性。
+\item[\textbf{ERANGE}] size非零，且没足够大小存放整个键列表。应用程序可能设置size为0，调用后获得列表的实际大小。程序之后可能重置value，并重新调用该系统调用。
+\end{eqlist*}
+
+\textbf{删除扩展属性。}最后，这三个系统调用从给定文件移除给定键：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <attr/xattr.h>
+  int removexattr (const char *path, const char *key);
+  int lremovexattr (const char *path, const char *key);
+  int fremovexattr (int fd, const char *key);
+\end{lstlisting}
+
+成功调用removexattr()会从文件path中移除扩展属性key。回顾之前讨论，未定义键与已定义但为空的键（零长度）有一定的区别。 
+
+lremovexattr()与removexattr()行为一致，除非path是符号链接，它会移除链接本身而不是链接目标文件的扩展属性。回顾之前，用户命名空间的属性不能被应用于符号链接—因此，该调用也很少被使用。
+
+fremovexattr()操作文件描述符fd；其它方面，它与removexattr()行为一致。
+
+成功时，所有三个系统调用返回0。失败时，所有三个调用返回-1，并使用下列之一设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径pat中某一目录的搜索权限（仅适用于removexattr()和lremovexattr()）。
+\item[\textbf{EBADF}] 无效的fd（仅适用于fremovexattr()）。
+\item[\textbf{EFAULT}] 无效的path或key指针。
+\item[\textbf{ELOOP}] 路径path中包含太多符号链接。（仅适用于removexattr()和lremovexattr()）。
+\item[\textbf{ENAMETOOLONG}] path太长（仅适用于removexattr()和lremovexattr()）。
+\item[\textbf{ENOATTR}] 给定文件不存在键key。
+\item[\textbf{ENOENT}] 路径path中的某部分不存在（仅适用于removexattr()和lremovexattr()）。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path中的某部分不是目录（仅适用于removexattr()和lremovexattr()）。
+\item[\textbf{ENOTSUPP}] path或fd所在的文件系统不支持扩展属性。
+\end{eqlist*}
+
+\section{目录}
+
+在Unix，目录是个简单的概念：它包含文件名的列表，每个文件名对应一个inode编号。每个文件名称为目录项，每个名字到inode的映射称为链接。目录内容（就是用户所见的ls的结果）就是该目录下所有文件名列表。当用户打开指定目录下的文件时，内核在该目录列表中查找文件名所对应的inode编号。然后内核将该inode编号传递给文件系统，文件系统使用它来寻找文件在设备上的物理位置。 
+
+目录也能包含其他目录。子目录是在另一个目录里的目录。基于这个定义，除了文件系统树真正根的目录 / 外，所有目录都是某些父目录的子目录。毫无疑问，该目录称为根目录（不要和root用户的主目录/root混淆）。
+
+路径名由文件名及一级或多级父目录组成。绝对路径名是以根目录起始的路径名—例如/usr/bin/sextant。相对路径名是不以根目录起始的路径名，例如bin/sextant。为使这样的路径名有效，操作系统必须知道目录的相对路径。当前工作目录（后面会讨论）被用作起始点。 
+
+文件和目录名能包含除了路径名中描述（delineate）目录的“/”和终止路径名的null以外的一切字符。也就是说，目前的标准都要求路径名中字符为在当前环境下有效可打印字符,ASCII也是如此，。内核和C库从来都没有这样的限制，一般都是应用程序强制只使用有效可打印字符。
+
+较老的Unix系统限制文件名至多有14个字符。今天，所有现代Unix文件系统允许每个文件名至少255个字节。\footnote[1]{记住，该限制是255个字节，而非255个字符。多字节字符显然占用多于一个字节。}Linux下许多文件系统甚至允许更长的文件名。\footnote[2]{当然，Linux提供对于较老的文件系统提供向后兼容性，例如FAT，仍然保持它们自己的限制。对于FAT，该限制是八个字符，跟着一个''.''，再跟着三个字符。是的，在文件系统中强制使用“.”作为特殊字符是愚蠢的。}
+
+\subsection{当前工作目录}
+
+每个进程拥有当前目录，一般是在创建时从父进程继承的。该目录就是大家熟知的进程当前工作目录（cwd）。当前工作目录是内核解析相对路径名时的起始点。例如，如果进程的当前工作目录是/home/blackbeard，且该进程试图打开parrot.jpg，内核将试着打开/home /blackbeard/parrot.jpg。相反地，如果进程试图打开/usr/bin/mast, 内核将直接地打开/usr/bin/mast—当前工作路径对绝对路径名（就是以/起始的路径名）无影响。
+
+进程可以获取及更改其当前工作目录。
+
+\subsubsection{获取当前工作目录}
+
+获取当前工作目录的首选方法是使用POSIX的标准系统调用getcwd()：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  char * getcwd (char *buf, size_t size);
+\end{lstlisting}
+
+成功调用getcwd( )会以绝对路径名形式复制当前工作目录至由buf指向的长度size字节的缓冲区，并返回一个指向buf的指针。失败时，调用返回NULL，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EFAULT}] 无效的buf指针。
+\item[\textbf{EINVAL}] size为0，但buf不是NULL。
+\item[\textbf{ENOENT}] 当前工作目录不再有效。一般发生在当前工作目录已移除时。
+\item[\textbf{ERANGE}] size太小，无法将当前工作目录保存至buf。应用程序需要分配更大的缓冲区并重试。
+\end{eqlist*}
+
+这是一个使用getcwd()的例子：
+
+\begin{lstlisting}
+  char cwd[BUF_LEN];
+  if (!getcwd (cwd, BUF_LEN)) {
+    perror ("getcwd");
+    exit (EXIT_FAILURE);
+  }
+  printf ("cwd = %s\n", cwd);
+\end{lstlisting}
+
+POSIX指出，如果buf是NULL，getcwd()的行为是未定义的。在这种情况下，Linux的C库将分配一个长度size字节的缓冲区，并在那存储当前工作目录。如果size为0，C库将分配足够大小的缓冲区存储当前工作目录。调用结束后，则由应用程序负责使用free()来释放缓冲区。因为这是Linux特有的处理方式，考虑到值可移植或严格遵守 POSIX的应用程序不应该使用这种方式。该特性的用法非常简单！这就是个例子：
+
+\begin{lstlisting}
+  char *cwd;
+  cwd = getcwd (NULL, 0);
+  if (!cwd) {
+    perror ("getcwd");
+    exit (EXIT_FAILURE);
+  }
+  printf ("cwd = %s\n", cwd);
+  free (cwd);
+\end{lstlisting}
+
+Linux的C库也提供函数get\_current\_dir\_name( )，当传递buf为Null与size为0时与getcwd( )行为一致：
+
+\begin{lstlisting}
+  #define _GNU_SOURCE
+  #include <unistd.h>
+  char * get_current_dir_name (void);
+\end{lstlisting}
+
+因此，这部分与之前的相同：
+
+\begin{lstlisting}
+  char *cwd;
+  cwd = get_current_dir_name ( );
+  if (!cwd) {
+    perror ("get_current_dir_name");
+    exit (EXIT_FAILURE);
+  }
+  printf ("cwd = %s\n", cwd);
+  free (cwd);
+\end{lstlisting}
+
+较早的BSD系统喜欢系统调用getwd()，Linux对其提供向后兼容：
+
+\begin{lstlisting}
+  #define _XOPEN_SOURCE_EXTENDED /* or _BSD_SOURCE */
+  #include <unistd.h>
+  char * getwd (char *buf);
+\end{lstlisting}
+
+调用getwd（）会复制当前工作目录至长度至少PATH\_MAX字节的buf。成功时调用返回buf指针，而失败时返回NULL。例如：
+
+\begin{lstlisting}
+  char cwd[PATH_MAX];
+  if (!getwd (cwd)) {
+    perror ("getwd");
+    exit (EXIT_FAILURE);
+  }
+  printf ("cwd = %s\n", cwd);
+\end{lstlisting}
+
+出于移植性与安全性的双重原因，应用程序不应该使用getwd()；推荐使用getcwd()。
+
+\subsubsection{更改当前工作目录}
+
+当用户第一次登入系统时，进程login设置其当前工作目录为在/etc/passwd指定的主目录。有时，进程却想更改其当前工作目录。例如，在用户键入cd时，就是shell希望改变工作目录。 
+
+Linux为更改当前工作目录提供两个系统调用，一个接受目录路径名，而另一个接受指向已打开目录的文件描述符：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int chdir (const char *path);
+  int fchdir (int fd);
+\end{lstlisting}
+
+调用chdir()会更改当前工作目录为path指定的路径名，绝对或相对路径均可以。同样，调用fchdir()会更改当前工作目录为文件描述符fd指向的路径名，而fd必须是打开的目录。成功时，两个调用均返回0。失败时，均返回-1。
+
+失败时，chdir()也使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径path中某一目录的搜索权限。
+\item[\textbf{EFAULT}] 无效的path指针。
+\item[\textbf{EIO}] 发生内部I/O错误。
+\item[\textbf{ELOOP}] 内核解析path时遇到太多符号链接。
+\item[\textbf{ENAMETOOLONG}] path太长。
+\item[\textbf{ENOENT}] path指向的目录不存在。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path中的一个或多个部分不是目录。
+\end{eqlist*}
+
+fchdir()使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对fd指向的路径目录的搜索权限（例如，未设置“执行位”）。当顶层目录是可读，但不可执行时则出现这种情况。open()成功，但fchdir()失败。
+\item[\textbf{EBADF}] fd不是个已打开的文件描述符。
+\end{eqlist*}
+
+对应不同的文件系统，这两个调用可能会有其他的错误值。
+
+这些系统调用只对当前运行进程有影响。Unix没有更改不同进程当前工作目录的机制。因此，shell的命令cd不是独立的进程（像大多数命令一样），chdir()在执行完第一个命令行参数之后立刻退出。换句话说，shell如果希望希望调用chdir()来改变其当前工作目录，cd必须是其内置命令。
+
+getcwd()常用来保存当前工作目录使进程能稍后返回它。例如：
+
+\begin{lstlisting}
+  char *swd;
+  int ret;
+  /* save the current working directory */
+  swd = getcwd (NULL, 0);
+  if (!swd) {
+    perror ("getcwd");
+    exit (EXIT_FAILURE);
+  }
+  /* change to a different directory */
+  ret = chdir (some_other_dir);
+  if (ret) {
+    perror ("chdir");
+    exit (EXIT_FAILURE);
+  }
+  /* do some other work in the new directory... */
+  /* return to the saved directory */
+  ret = chdir (swd);
+  if (ret) {
+    perror ("chdir");
+    exit (EXIT_FAILURE);
+  }
+  free (swd);
+\end{lstlisting}
+
+open()打开当前目录，随后调用fchdir()，这种方法更好一些。内核不在内存中存储当前工作目录的路径名；它只保存inode，所以这种方法更快一些。因此，无论何时用户调用getcwd()，内核必须通过遍历目录结构生成路径名。相反地，打开当前工作目录的开销更少，因为内核中已经有了该inode,并且不需要使用路径名来打开文件。下面的代码使用该方法：
+
+\begin{lstlisting}
+  int swd_fd;
+  swd_fd = open (".", O_RDONLY);
+  if (swd_fd == -1) {
+    perror ("open");
+    exit (EXIT_FAILURE);
+  }
+  /* change to a different directory */
+  ret = chdir (some_other_dir);
+  if (ret) {
+    perror ("chdir");
+    exit (EXIT_FAILURE);
+  }
+  /* do some other work in the new directory... */
+  /* return to the saved directory */
+  ret = fchdir (swd_fd);
+  if (ret) {
+    perror ("fchdir");
+    exit (EXIT_FAILURE);
+  }
+  /* close the directory's fd */
+  ret = close (swd_fd);
+  if (ret) {
+    perror ("close");
+    exit (EXIT_FAILURE);
+  }
+\end{lstlisting}
+
+这就是shell缓存以前目录的方法（例如，在bash中使用cd）。
+
+不关心其当前工作目录的进程（例如守护进程）一般通过调用chdir(''/'')设置其当前工作目录为/。一般涉及到用户及其数据交互的应用程序(例如文字处理器)通常设置其当前工作目录为用户主目录，或特殊的文档目录。因为当前工作目录只与相对路径名相关，因此更改当前工作目录是用户从shell调用的命令行实用工具中最实用的。
+
+\subsection{创建目录}
+
+Linux为创建新目录提供了一个标准的POSIX系统调用：
+
+\begin{lstlisting}
+  #include <sys/stat.h>
+  #include <sys/types.h>
+  int mkdir (const char *path, mode_t mode);
+\end{lstlisting}
+
+成功调用mkdir()会创建目录path（可能是相对或绝对路径），其权限位为mode（由当前umask修改），并返回0。
+
+当前umask以通常方式修改参数mode，并和操作系统特定的模式位进行计算：在Linux，新建目录的权限位是（mode \& $\sim$ umask \& 01777）。换句话说，umask为进程增加的限定是mkdir()无法忽略的。如果新目录的父目录拥有已设置的群组ID（sgid）位设置，或文件系统以BSD的组方式被挂载，新目录将从父目录继承群组从属关系。否则进程有效群组ID将应用于新目录。 
+
+调用失败时，mkdir()返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 当前进程对父目录不可写，或path中的一个或多个部分不可搜索。
+\item[\textbf{EEXIST}] path已存在（且非必要的目录）。
+\item[\textbf{EFAULT}] 无效的path指针。
+\item[\textbf{ELOOP}] 内核解析path时遇到太多符号链接。
+\item[\textbf{ENAMETOOLONG}] path太长。
+\item[\textbf{ENOENT}] path组成不存在或一个悬空的符号链接。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOSPC}] 包含path的设备空间用尽，或用户磁盘配额已超限。
+\item[\textbf{ENOTDIR}] path的一个或多个部分不是目录。
+\item[\textbf{EPERM}] 包含path的文件系统不支持目录创建。
+\item[\textbf{EROFS}] 包含path的文件系统只读。
+\end{eqlist*}
+
+\subsection{移除目录}
+
+与mkdir()对应，标准的POSIX调用rmdir()将目录从文件系统层次上移除：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int rmdir (const char *path);
+\end{lstlisting}
+
+调用成功时，rmdir()从文件系统移除path，并返回0。除了.和..目录外，path指向的目录必须为空。没有系统调用实现rm -r一样递归删除的功能。这样的工具先执行文件系统深度优先搜索，从叶节点开始删除所有文件与目录，并返回至文件系统；当目录内的文件被全部删除时，则可以使用rmdir()来删除该目录。
+
+调用失败时，rmdir()返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 不允许写入path的父目录，或路径path中的一个目录不可搜索。
+\item[\textbf{EBUSY}] 系统正使用path，不可删除。在Linux，只有当path是挂载点或根目录（感谢chroot( )，根目录不必是挂载点！）时才可能发生。 
+\item[\textbf{EFAULT}] 无效的path指针。
+\item[\textbf{EINVAL}] path的 "."目录是其最后一部分。
+\item[\textbf{ELOOP}] 内核解析path时遇到太多符号链接。
+\item[\textbf{ENAMETOOLONG}] path太长。
+\item[\textbf{ENOENT}] path中一部分不存在或一个无效的符号链接。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] 路径path的一个或多个部分不是目录。
+\item[\textbf{ENOTEMPTY}] path包含除了特殊的.和..之外目录项。
+\item[\textbf{EPERM}] path的父目录具有严格的粘贴位（S\_ISVTX）设置，但进程有效用户ID既不是父目录也不是path本身的用户ID，且进程不具有CAP\_FOWNER能力。基于以上两个原因之一，包含path的文件系统不允许目录的移除。 
+\item[\textbf{EROFS}] 包含path的文件系统以只读方式加载。
+\end{eqlist*}
+
+一个简单的例子：
+
+\begin{lstlisting}
+  int ret;
+  /* remove the directory /home/barbary/maps */
+  ret = rmdir ("/home/barbary/maps");
+  if (ret)
+    perror ("rmdir");
+\end{lstlisting}
+
+\subsection{读取目录内容}
+
+POSIX定义了一系列读取目录内容的函数族，使用这些函数可以获取位于指定目录的文件列表。当你实现ls或图形化的文件保存对话框时，当你需要操作给定目录下每个文件，或当你想在目录下搜索匹配给定模式的文件时，这些函数很有用。
+
+开始读取目录内容前，你需要创建一个由DIR对象指向的目录流：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <dirent.h>
+  DIR * opendir (const char *name);
+\end{lstlisting}
+
+成功调用opendir()会创建name所指向目录的目录流。
+
+目录流比指向打开目录的文件描述符保存的内容多了一些，主要增加的是一些元数据和保存目录内容的缓冲区。因此，可以在给定目录流中获取该目录的文件描述符：
+
+\begin{lstlisting}
+  #define _BSD_SOURCE /* or _SVID_SOURCE */
+  #include <sys/types.h>
+  #include <dirent.h>
+  int dirfd (DIR *dir);
+\end{lstlisting}
+
+成功调用dirfd()返回目录流dir的文件描述符。错误时，调用返回-1。由于目录流函数只能在内部使用该文件描述符，程序只能调用那些不操作文件位置的系统调用。dirfd()是BSD的扩展，但不是POSIX标准函数；希望遵循POSIX标准的程序员应该避免使用它。 
+
+\subsubsection{从目录流读取}
+
+使用opendir()创建一个目录流后，程序可以从目录中读取目录项。使用readder()，可以从给定DIR对象中依次返回目录项：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <dirent.h>
+  struct dirent * readdir (DIR *dir);
+\end{lstlisting}
+
+成功调用readdir()会返回dir指向的下个目录项。结构dirent指向目录项。在Linux的<dirent.h>中其定义如下：
+
+\begin{lstlisting}
+  struct dirent {
+    ino_t d_ino; /* inode number */
+    off_t d_off; /* offset to the next dirent */
+    unsigned short d_reclen; /* length of this record */
+    unsigned char d_type; /* type of file */
+    char d_name[256]; /* filename */
+  };
+\end{lstlisting}
+
+POSIX只需要字段d\_name，该字段是目录内单个文件名。其他字段是可选的，或Linux特有的。希望将程序移植至其他系统，或希望与保持POSIX一致的应用程序应只访问d\_name。
+
+应用程序连续调用readdir()，获取目录每个文件，直至它们发现它们搜索的文件，或直到整个目录已读完，此时readdir()返回NULL。
+
+失败时，readdir()也返回NULL。为区别错误和已读完所有文件，应用程序必须在每次调用readdir()之前将errno设置为0，并在之后检查返回值和errno。readdir()设置的唯一errno是EBADF，意味着无效的dir。因此，对于许多应用程序来讲，没有必要检查错误，直接假定NULL代表已经读完整个目录。
+
+\subsubsection{关闭目录流}
+
+使用closedir()关闭由opendir()打开的目录流：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <dirent.h>
+  int closedir (DIR *dir);
+\end{lstlisting}
+
+成功调用closedir()会关闭由dir指向的目录流，包括目录的文件描述符，并返回0。失败时，函数返回-1，并设置errno为EBADF，这是唯一可能的错误码，意味着dir不是打开的目录流。
+
+下面部分实现用函数find\_file\_in\_dir()，它使用readdir()在给定目录中搜索指定文件。如果文件在目录中存在，函数返回0。否则，返回非零值：
+
+\begin{lstlisting}
+ /*
+  * find_file_in_dir - searches the directory 'path' for a
+  * file named 'file'.
+  *
+  * Returns 0 if 'file' exists in 'path' and a nonzero
+  * value otherwise.
+  */
+  int find_file_in_dir (const char *path, const char *file)
+  {
+    struct dirent *entry;
+    int ret = 1;
+    DIR *dir;
+    dir = opendir (path);
+    errno = 0;
+    while ((entry = readdir (dir)) != NULL) {
+      if (!strcmp(entry->d_name, file)) {
+        ret = 0;
+        break;
+      }
+    }
+    if (errno && !entry)
+      perror ("readdir");
+    closedir (dir);
+    return ret;
+  }
+\end{lstlisting}
+
+\subsubsection{用于读取目录内容的系统调用}
+
+之前讨论的读取目录内容的函数都是C库提供的标准POSIX函数。在这些函数内部，则使用系统调用readdir()和getdents()，为了让本章内容更完整，给出这两个系统调用：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  #include <linux/types.h>
+  #include <linux/dirent.h>
+  #include <linux/unistd.h>
+  #include <errno.h>
+ /*
+  * Not defined for user space: need to
+  * use the _syscall3( ) macro to access.
+  */
+  int readdir (unsigned int fd, struct dirent *dirp, unsigned int count);
+  int getdents (unsigned int fd, struct dirent *dirp, unsigned int count);
+\end{lstlisting}
+
+一般来讲，你不会使用这些系统调用！它们狠晦涩，而且不可移植。因此，用户空间应用程序应使用C库的系统调用opendir(), readdir()和closedir()。
+
+\section{链接}
+
+回顾一下关于目录的讨论,目录中每个名字至inode的映射被称为链接。根据这个简单的定义，链接本质上不过是列表（目录）中一个指向inode的名字，从这个定义来看，并没有限制一个inode的链接的数目。因此单个inode（或者说单个文件）可以同时由/etc/customs和/var/run/ledger指向。
+
+这个例子中有一点需要注意的是：因为链接映射至inode，且不同文件系统的inode编号是不同的，/etc/customs和/var/run/ledger必须位于同一文件系统。在一个文件系统，指定文件的链接数可以很大。唯一的限制是用来表示链接树的整数数据类型的范围。所有链接中，没有一个是“初始”或是“主要”的链接。这些链接均指向同一文件，并共享文件状态。
+
+我们称这种类型的链接为硬链接。文件可以有零个，一个，或多个链接。大多数文件有1个链接，也就是说只有一个目录项指向该文件，但一些文件可能有两个或甚至多个链接。链接数为0的文件在文件系统上没有对应的目录项。当文件链接计数达到0时，文件被标记为空闲，且其磁盘块可重用。\footnote[1]{寻找链接计数0但块标记为已分配的文件，是文件系统检测工具fsck的主要工作。这样的情况通常发生在文件已删除，但仍然保持打开状态，在文件关闭前系统崩溃。内核不能标记文件系统块为空闲，以避免引起偏差。日志文件系统可以消除此类错误。}当进程已打开这样一个文件时，文件仍在文件系统中保留。若没有进程打开该文件，文件会被移除。
+
+Linux内核通过使用链接计数和使用计数来进行管理。使用计数是文件被打开的实例数的计数。文件直到链接计数和使用计数均为0时才会从文件系统中移除。
+
+另外一种链接是符号链接，它不是文件系统中文件名和inode的映射，而是在运行时解释的更高层次的指针。符号链接可跨越文件系统，我们稍后将讨论它。
+
+\subsection{硬链接}
+
+作为初始的Unix系统调用之一，link()已经是POSIX标准，我们可以使用link()为存在文件的创建新链接：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int link (const char *oldpath, const char *newpath);
+\end{lstlisting}
+
+成功调用link()会为已存在的文件oldpath建立路径newpath下的新链接，并返回0。结束之后，oldpath和newpath均指向同一文件—事实上，我们无法确知哪个是''初始''链接。
+
+失败时，调用返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对路径oldpath某部分的搜索权限，或没有对包含newpath目录的写权限。
+\item[\textbf{EEXIST}] newpath已存在——link()将不会覆盖已存在的目录项。
+\item[\textbf{EFAULT}] 无效的oldpath或newpath指针。
+\item[\textbf{EIO}] 发生内部I/O错误（这很严重！）。
+\item[\textbf{ELOOP}] 解析oldpath或newpath时遇到太多符号链接。
+\item[\textbf{EMLINK}] oldpath指向的inode已达到指向它的最大链接数。
+\item[\textbf{ENAMETOOLONG}] oldpath或newpath太长。
+\item[\textbf{ENOENT}] oldpath或newpath组成不存在。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOSPC}] 包含newpath的设备没有建立新目录项的空间。
+\item[\textbf{ENOTDIR}] oldpath或newpath组成不是目录。
+\item[\textbf{EPERM}] 包含newpath的文件系统不允许新硬链接的创建，或oldpath是目录。
+\item[\textbf{EROFS}] newpath位于只读文件系统上。
+\item[\textbf{EXDEV}] newpath和oldpath不在同一文件系统上。（Linux允许单个文件系统挂载在多个地方，但即使这样，硬链接也不能跨越挂载点创建。）
+\end{eqlist*}
+
+这个例子创建新目录项pirate，它与已有的文件privateer均指向同意inode（即同一文件），均位于/home/kidd：
+
+\begin{lstlisting}
+  int ret;
+ /*
+  * create a new directory entry,
+  * '/home/kidd/privateer', that points at
+  * the same inode as '/home/kidd/pirate'
+  */
+  ret = link ("/home/kidd/privateer", /home/kidd/pirate");
+  if (ret)
+    perror ("link");
+\end{lstlisting}
+
+\subsection{符号链接}
+
+符号链接，也是熟知的symlinks或软链接。与硬链接的相同处在于二者均指向文件系统中的文件，符号链接的不同点在于它不增加额外的目录项，而是一种特殊的文件类型。该文件包含被称为符号链接指向的其他文件（一般成为符号链接目标）的路径名。运行时，内核用该路径名代替符号链接的路径名（除非使用系统调用以''l''开头的系统调用，例如lstat()，它操作链接本身而非目标文件）。因此，一个硬链接与指向同一文件的另一硬链接很难区分，但很容易区分符号链接与其目标文件。
+
+符号链接可能相对或绝对路径名。它可以包含之前讨论的指向目录本身的特殊''.''目录，或指向该目录父目录的''..''目录。
+
+软链接与硬链接的一点很重要的区别是它可以能跨越文件系统。事实上，它可以指向一切位置！符号链接能指向已存在（通常用法）或不存在的文件。后者被称为悬空的符号链接。有时，悬空的符号链接是多余的—例如当链接目标已删除，但符号链接还存在—但有的时候，是有意而为之。
+
+创建符号链接的系统调用与创建硬链接非常相像：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int symlink (const char *oldpath, const char *newpath);
+\end{lstlisting}
+
+成功调用symlink()会创建指向目标oldpath的符号链接newpath，并返回0。
+
+错误时，symlink()返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对oldpath某部分的搜索权限，或没有对包含newpath的目录写权限。
+\item[\textbf{EEXIST}] newpath已存在—symlink( )将不会覆盖存在的目录项。
+\item[\textbf{EFAULT}] 无效的oldpath或newpath指针。
+\item[\textbf{EIO}] 发生内部I/O错误(这很严重！)。
+\item[\textbf{ELOOP}] 解析oldpath或newpath时遇到太多符号链接。
+\item[\textbf{EMLINK}] oldpath指向的inode已达到指向它的最大链接数。
+\item[\textbf{ENAMETOOLONG}] oldpath或newpath太长。
+\item[\textbf{ENOENT}] oldpath或newpath组成不存在。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOSPC}] 包含newpath的设备没有建立新目录项的空间。
+\item[\textbf{ENOTDIR}] oldpath或newpath的某部分不是目录。
+\item[\textbf{EPERM}] 包含newpath的文件系统不允许新符号链接的创建。
+\item[\textbf{EROFS}] newpath位于只读文件系统上。
+\end{eqlist*}
+
+以下代码与前例类似，但它建立/home/kidd/pirate的符号链接（与硬链接相对）/home/kidd/privateer：
+
+\begin{lstlisting}
+  int ret;
+ /*
+  * create a symbolic link,
+  * '/home/kidd/privateer', that
+  * points at '/home/kidd/pirate'
+  */
+  ret = symlink ("/home/kidd/privateer", "/home/kidd/pirate");
+  if (ret)
+    perror ("symlink");
+\end{lstlisting}
+
+\subsection{解除链接}
+
+建立链接的反向操作是解除链接，即从文件系统中移除路径名。系统提供一个独立的系统调用unlink()处理该任务：
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int unlink (const char *pathname);
+\end{lstlisting}
+
+成功调用unlink()从文件系统删除pathname，并返回0。如果该路径是指向文件的最后一个链接，会从文件系统删除该文件。如果进程打开文件，在进程关闭文件前，内核不会从文件系统中删除文件。若没有进程打开该文件，文件则被删除。
+
+如果pathname指向符号链接，则只删除链接，而不删除目标文件。
+
+如果pathname指向特殊类型文件（例如设备，FIFO，或socket），调用会从文件系统删除该文件，但打开文件的进程可以继续使用它。
+
+错误时，unlink()返回-1，并使用下列错误代码设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程没有对pathname父目录的写权限，或没有对pathname某部分的搜索权限。
+\item[\textbf{EFAULT}] 无效的pathname指针。
+\item[\textbf{EIO}] 发生内部I/O错误(这很严重！)。
+\item[\textbf{EISDIR}] pathname指向一个目录。
+\item[\textbf{ELOOP}] 解析pathname时遇到太多符号链接。
+\item[\textbf{ENAMETOOLONG}] pathname太长。
+\item[\textbf{ENOENT}] pathname组成不存在。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOTDIR}] pathname的某部分不是目录。
+\item[\textbf{EPERM}] 系统不允许解除链接。
+\item[\textbf{EROFS}] pathname位于只读文件系统上。
+\end{eqlist*}
+
+unlink()不会移除目录。因此，应用程序应使用我们更早讨论（见''移除目录''）的rmdir()来删除目录。
+
+为了简化对各种类型文件的删除，C语言提供函数remove()：
+
+\begin{lstlisting}
+  #include <stdio.h>
+  int remove (const char *path);
+\end{lstlisting}
+
+成功调用remove()会从文件系统删除path，并返回0。如果path是个文件，remove()调用unlink()；如果path是个目录，remove()调用rmdir()。
+
+错误时，remove()返回-1，其errno可以为调用unlink()和rmdir()中出现的所有有效错误码。
+
+\section{复制和移动文件}
+
+两个最基本的文件处理任务是复制和移动文件,通常分别使用命令cp和mv实现。在文件系统层，复制是在新路径名下复制给定文件内容的行为。与创建文件新的硬链接不同是，对一个文件的改变将不会影响另一个—也就是说，在（至少）两个不同目录项下，保存文件的两个独立拷贝。移动是在文件所在位置下重命名目录项的行为。该行为不会创建另外一个拷贝备份的创建。
+
+\subsection{复制}
+
+虽然可能让一些人很吃惊，但Unix不包含实现多文件和目录复制的系统或库调用。cp或GNOME’s Nautilus文件管理器等工具都需要独立实现这些功能。
+
+下面是复制文件src至命名为dst的文件的步骤：
+
+\begin{enumerate}
+\item 打开src。
+\item 打开dst，如果它不存在则创建，且如果存在则长度截断为零。
+\item 将src数据块读至内存。
+\item 将该数据块写入dst。
+\item 继续操作直到src全部已读取且已写入dst。
+\item 关闭dst。
+\item 关闭src。
+\end{enumerate}
+
+如果复制目录，则通过mkdir()创建该目录和所有子目录；其中的每个文件之后单独复制。
+
+\subsection{移动}
+
+不像复制操作，Unix提供移动文件的系统调用。ANSI C标准中介绍了关于多文件操作的调用，POSIX标准中对于多文件和目录操作都支持：
+
+\begin{lstlisting}
+   #include <stdio.h>
+   int rename (const char *oldpath, const char *newpath);
+\end{lstlisting}
+
+成功调用rename()会将路径名oldpath重命名为newpath。文件内容和inode保持不变。oldpath和newpath必须位于同一文件系统\footnote[1]{虽然Linux允许在目录结构下多点挂载设备，即使它们在同一设备上，但仍不能将挂载点重命名为另外一个。}；否则调用将会失败。mv等工具必须通过依次调用复制和解除链接来完成这个操作。
+
+成功时，rename()返回0，指向oldpath的文件现在由newpath指向。失败时，调用返回-1，不影响oldpath或newpath，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 调用的进程缺少对oldpath或newpath父目录的写权限，或缺少对oldpath或newpath中某个目录的搜索权限，或当oldpath是目录时缺少对oldpath的写权限。最后一种情况实际是因为当oldpath是个目录时rename（）必须更新oldpath的目录..。
+\item[\textbf{EBUSY}] oldpath或newpath是挂载点。
+\item[\textbf{EFAULT}] 无效的oldpath或newpath指针。
+\item[\textbf{EINVAL}] newpath包含在oldpath中，因此，重命名会导致oldpath是其本身的子目录。
+\item[\textbf{EISDIR}] newpath存在且是目录，但oldpath不是目录。
+\item[\textbf{ELOOP}] 解析oldpath或newpath时遇到太多符号链接。
+\item[\textbf{EMLINK}] oldpath已达到链接至其本身的最大数目，或oldpath是个目录，且newpath已达到链接至其本身的最大数目。
+\item[\textbf{ENAMETOOLONG}] oldpath或newpath太长。
+\item[\textbf{ENOENT}] oldpath或newpath的某部分不存在，或是个悬空的符号链接。
+\item[\textbf{ENOMEM}] 剩余内核空间不足，无法完成请求。
+\item[\textbf{ENOSPC}] 剩余设备空间不足，无法完成请求。
+\item[\textbf{ENOTDIR}] oldpath或newpath的某部分（除了目录的最后一部分）不是目录，或oldpath是目录，但newpath存在但不是目录。
+\item[\textbf{ENOTEMPTY}] newpath是目录且非空。
+\item[\textbf{EPERM}] 参数中指定的路径之一，其父目录已设置粘贴位(sticky bit)，而调用进程的有效用户ID既不是文件也不是其父目录的用户ID，且该进程没有特权。
+\item[\textbf{EROFS}] 文件系统标记为只读。
+\item[\textbf{EXDEV}] oldpath和newpath不在同一文件系统上。
+\end{eqlist*}
+
+\begin{center}
+表格7-1 总结对不同类型文件互相移动的结果。
+\end{center}
+\begin{center}
+\begin{tabular}{p{2cm}p{2.8cm}p{2.8cm}p{2.8cm}p{2.8cm}}\toprule
+\rowcolor[gray]{.9}
+ & \textbf{dst是文件} & \textbf{dst是目录} & \textbf{dst是链接} & \textbf{dst不存在}\\ \midrule
+\textbf{src是文件} & dst被src覆盖 & 失败并返回
+
+EISDIR & 文件被重命名且dst被覆盖 & 文件被重命名\\
+\textbf{src是目录} & 失败并返回ENOTDIR & 如果dst为空则src被重命名为dst；否则失败并返回ENOTEMPTY & 目录被重命名且dst被覆盖 & 目录被重命名\\
+\textbf{src是链接} & 链接被重命名且dst被覆盖 & 失败并返回
+
+EISDIR & 链接被重命名且dst被覆盖 & 链接被重命名\\
+\textbf{src不存在} & 失败并返回ENOENT & 失败并返回ENOENT & 失败并返回ENOENT & 失败并返回ENOENT\\ \bottomrule
+\end{tabular}
+\end{center}
+
+对于以上所有情况，无论类型，如果src与dst位于不同文件系统上，调用失败并返回EXDEV。
+
+\section{设备节点}
+
+设备节点是应用程序与设备驱动交互的特殊文件。当应用程序在设备节点上执行一般的Unix I/O（例如打开，关闭，读取，写入时），内核以不同于普通文件I/O的方式处理这些请求。内核将该请求转交给设备驱动。设备驱动处理这些I/O操作，并向用户返回结果。设备节点提供设备抽象，使应用程序不必了解特定设备或熟悉特别的接口。设备节点是Unix系统上访问硬件的标准机制。但网络设备却是例外，回顾Unix的历史，很多人认为这样处理是一个错误。对所有机器硬件使用同样的read()，write()和mmap()进行操作，正是Unix简洁美感的最好体现。
+
+内核如何识别哪些设备驱动该处理哪些请求呢？每个设备节点都具有两个数值属性，分别是主设备号和次设备号。主次设备号与对应的设备驱动映射表已载入内核。如果设备节点的主次设备号不对应内核的设备驱动（由于各种原因，偶尔会发生这种情况），在设备节点上的open()请求返回-1并设置errno为ENODEV。我们称这样的设备是不存在的设备。
+
+\subsection{特殊设备节点}
+
+所有的Linux系统上都有几个特殊的设备节点。这些设备节点是Linux开发环境的一部分，且它们是做为Linux ABI的一部分出现的。
+
+\emph{空设备}位于/dev/null，主设备号是1，次设备号是3。该设备文件的所有者是root但所有用户均可读写。内核会忽略所有对该设备的写请求。所有对该文件的读请求则返回文件终止符（EOF）。
+
+\emph{零设备}位于/dev/zero，主设备号为1，次设备号为5。与空设备一样，内核忽略所有对零设备的写请求。读取该设备会返回无限null字节流。
+
+\emph{满设备}位于/dev/full，主设备号为1，次设备号为7。与零设备一样，读请求返回null字符（'\textbackslash0'）。写请求却总触发ENOSPC错误，它表明设备已满。
+
+这些设备各有不同的用途。它们对测试应用程序怎样处理各种特殊问题很有帮助（例如一个满文件系统）。由于空设备和零设备忽略写请求，它们也常用来提忽略无用I/O操作。
+
+\subsection{随机数生成器} 
+
+内核的随机数生成器设备位于/dev/random和/dev/urandom。它们的主设备号1，次设备号分别是8和9。
+
+内核的随机数生成器从设备驱动和其他源中收集噪声，内核将收集的噪声连结并做单向哈希，其结果存储在内核熵池中。内核保持池中预算数量的熵比特数。
+
+读取/dev/random时，则返回该池中的熵。该结果适于作为随机数生成器的种子，用来生成密钥或其他需要强熵加密的任务。
+
+理论上，能从熵池获取足够数据并成功破解单向哈希的攻击者能获得足够多的熵池中剩余熵的状态信息。尽管目前这样的攻击只是理论上存在的(众所周知，这样的攻击没发生过),但内核仍能通过减少池中熵预算数量来应对这种可能的攻击。当预算数达到0时，读取请求将阻塞，直到系统产生更多的 entropy 且对熵的预算足以能满足读取的请求。
+
+/dev/urandom不具有该特性;即使内核熵预算数量不足以完成请求，对该设备的读取请求仍会成功。仅仅是那些对安全性要求极高的程序(例如GNU Privacy Guard中安全数据交换的密钥生成器)需要关注加密强熵。大多数应用程序应使用/dev/urandom而非/dev/random。在没有填充内核熵池的I/O行为发生时，读取/dev/random会阻塞一段很长的时间。这种情况在无盘、无头服务器中是比较常见的。
+
+\section{带外通信}
+
+Unix文件模型令人印象深刻。仅通过简单的读写操作，Unix几乎抽象了在所有可能的对象的所有可能操作。有时，程序员却需要与其基本数据流外的文件通信。例如，对于串口设备来讲，对设备的读取将对串口远端硬件读取；写入设备将向那硬件发送数据。进程如何读取串口特殊的状态针（例如数据终端就绪（DTR）信号）？进程怎样设置串口的奇偶校验？
+
+答案是使用系统调用ioctl()。 ioctl 从字面理解就是I/O控制的意思，使用它可以进行带外通信：
+
+\begin{lstlisting}
+  #include <sys/ioctl.h>
+  int ioctl (int fd, int request, ...);
+\end{lstlisting}
+
+系统调用需要两个参数：
+
+\begin{eqlist*}
+\item[\textbf{fd}] 文件的文件描述符
+\item[\textbf{request}] 特殊请求代码，该值由内核和进程预定义，它指明对文件fd执行何种操作。
+\end{eqlist*}
+
+它可能也接受一个或多个隐式可选参数（通常是无符号整数或指针），并传递给内核。
+
+下面的程序中使用CDROMEJECT请求，可以从CD-ROM设备弹出多媒体光盘。设备是在程序命令行的第一个参数，由用户指定。该程序的功能和eject命令类似：
+
+\begin{lstlisting}
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <fcntl.h>
+  #include <sys/ioctl.h>
+  #include <unistd.h>
+  #include <linux/cdrom.h>
+  #include <stdio.h>
+  int main (int argc, char *argv[])
+  {
+    int fd, ret;
+    if (argc < 2) {
+      fprintf (stderr, "usage: %s <device to eject>\n", argv[0]);
+      return 1;
+    }
+   /*
+    * Opens the CD-ROM device, read-only. O_NONBLOCK
+    * tells the kernel that we want to open the device
+    * even if there is no media present in the drive.
+    */
+    fd = open (argv[1], O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+      perror ("open");
+      return 1;
+    }
+    /* Send the eject command to the CD-ROM device. */
+    ret = ioctl (fd, CDROMEJECT, 0);
+    if (ret) {
+      perror ("ioctl");
+      return 1;
+    }
+    ret = close (fd);
+    if (ret) {
+      perror ("close");
+      return 1;
+    }
+    return 0;
+  }
+\end{lstlisting}
+
+CDROMEJECT请求是Linux CD-ROM设备驱动程序的一个特性。当内核接收ioctl()请求时，它寻找对应文件描述符的文件系统（真实文件时）或设备驱动（设备节点时），并传递处理请求。CD-ROM设备驱动接收请求并物弹出驱动器。
+
+本章稍后，我们将看到ioctl()使用可选参数返回请求进程信息的例子。
+
+\section{监视文件事件}
+
+Linux提供为监视文件接口inotify—利用它可以监控文件的移动，读取，写入，或删除操作。假设你正在编写一个类似GNOME’s Nautilus的图形化文件管理器。如果文件已复制至目录而Nautilus正在显示目录内容，则该目录在文件管理器中的试图将会不一致。
+
+一个解决办法是反复读取目录内容，删除变更内容并更新显示结果。这会产生阶段性的开销，远远谈不上是一个高明的解决方案。更糟的是，在文件被移除或添加至目录和文件管理器反复读取目录之间会产生竞争。
+
+通过inotify，内核能在事件发生时通知（push）应用程序。一旦文件被删除，内核立刻通知Nautilus。Nautilus做出响应，直接从目录的图形化显示中移除被删除的文件。
+
+许多其他的应用程序也关注文件事件。例如备份工具和数据索引工具。inotify能够保证这些程序进行实时操作：在文件被创建，删除，或写入时，可以立刻更新备份或数据索引。
+
+inotify替代了dnotify。dnotify是较早的一个基于信号接口的较为繁琐的文件监视机制。相对于dnotify ,应用程序更倾向于使用inotify。inotify机制在内核2.6.13中被引入，由于程序在操作普通文件时的操作（尤其是select()和 poll()）也使用inotify ,因此该机制非常灵活且易于使用。本书我们仅包含inotify。 
+
+\subsection{初始化inotify}
+
+在使用inotify之前，进程必须对它初始化。系统调用inotify\_init()用来初始化inotify并返回初始化实例指向的文件描述符：
+
+\begin{lstlisting}
+  #include <inotify.h>
+  int inotify_init (void);
+\end{lstlisting}
+
+错误时，inotify\_init()返回-1，并使用下列代码设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EMFILE}] inotify达到用户最大的实例数限制。
+\item[\textbf{ENFILE}] 文件描述符数达到系统的最大限制。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\end{eqlist*}
+
+让我们对inotify进行初始化，以便于后续使用：
+
+\begin{lstlisting}
+  int fd;
+  fd = inotify_init ( );
+  if (fd == -1) {
+    perror ("inotify_init");
+    exit (EXIT_FAILURE);
+  }
+\end{lstlisting}
+
+\subsection{监视}
+
+进程初始化inotify之后，会设置监视。监视由监视描述符（watch descriptor）表示，由一个标准Unix路径和一个与之相关联的监视掩码组成。该掩码通知内核，该进程关心何种事件（例如，读取，写入，或是二者都包括）。
+
+inotify可以监视文件和目录。当监视目录时，inotify会报告目录本身和该目录下所有文件（但不包括监视目录子目录下的文件—监视不是递归的）的事件。
+
+\subsubsection{增加新监视}
+
+系统调用inotify\_add\_watch()在文件或者目录path上增加一个监视，监视事件由mask确定，监视实例由fd指定：
+
+\begin{lstlisting}
+  #include <inotify.h>
+  int inotify_add_watch (int fd, const char *path, uint32_t mask);
+\end{lstlisting}
+
+成功时，调用返回新建的监视描述符。失败时，inotify\_add\_watch()返回-1，并使用下列值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EACCESS}] 不允许读取path指定的文件。增加监视的进程必须能读取该文件。
+\item[\textbf{EBADF}] 文件描述符fd是无效的inotify实例。
+\item[\textbf{EFAULT}] 无效的path指针。
+\item[\textbf{EINVAL}] 监视掩码mask包含无效的事件。
+\item[\textbf{ENOMEM}] 剩余内存不足，无法完成请求。
+\item[\textbf{ENOSPC}] inotify监视总数达到用户限制。
+\end{eqlist*}
+
+\subsubsection{监视掩码}
+
+监视掩码由一个或多个inotify事件的二进制或运算生成，其定义在<inotify.h>：
+
+\begin{eqlist*}
+\item[\textbf{IN\_ACCESS}] 文件读取。
+\item[\textbf{IN\_MODIFY}] 文件写入。
+\item[\textbf{IN\_ATTRIB}] 文件元数据（例如，所有者，权限，或扩展属性）已改变。
+\item[\textbf{IN\_CLOSE\_WRITE}] 文件已关闭且曾以写入模式打开。
+\item[\textbf{IN\_CLOSE\_NOWRITE}] 文件已关闭且未曾以写入模式打开。
+\item[\textbf{IN\_OPEN}] 文件已打开。
+\item[\textbf{IN\_MOVED\_FROM}] 文件已从监视目录中移出。
+\item[\textbf{IN\_MOVED\_TO}] 文件已移入监视目录。
+\item[\textbf{IN\_CREATE}] 文件已在监视目录创建。
+\item[\textbf{IN\_DELETE}] 文件已从监视目录删除。
+\item[\textbf{IN\_DELETE\_SELF}] 监视对象本身已删除。
+\item[\textbf{IN\_MOVE\_SELF}] 监视对象本身已移动。
+\end{eqlist*}
+
+下面的事件已定义，单个值中包括两个或多个事件：
+
+\begin{eqlist*}
+\item[\textbf{IN\_ALL\_EVENTS}] 所有合法的事件。
+\item[\textbf{IN\_CLOSE}] 所有涉及关闭的事件（当前均为IN\_CLOSE\_WRITE和IN\_CLOSE\_NOWRITE）。
+\item[\textbf{IN\_MOVE}] 所有涉及移动的事件（当前均为IN\_MOVED\_FROM和IN\_MOVED\_TO）。
+\end{eqlist*}
+
+现在，我们来看看在一个已存在的inotify实例增加新的监视：
+
+\begin{lstlisting}
+  int wd;
+  wd = inotify_add_watch (fd, "/etc", IN_ACCESS | IN_MODIFY);
+  if (wd == -1) {
+    perror ("inotify_add_watch");
+    exit (EXIT_FAILURE);
+  }
+\end{lstlisting}
+
+该例子对目录/etc所有读写增加监视。如果/etc下所有文件被读取或写入，inotify发送事件至inotify文件描述符fd，这个事件提供监视描述符 wd。让我们看看inotify怎样表示这些事件。
+
+\subsection{inotify事件}
+
+我们使用定义在<inotify.h>结构inotify\_event来描述inotify事件：
+
+\begin{lstlisting}
+  #include <inotify.h>
+  struct inotify_event {
+    int wd; /* watch descriptor */
+    uint32_t mask; /* mask of events */
+    uint32_t cookie; /* unique cookie */
+    uint32_t len; /* size of 'name' field */
+    char name[]; /* null-terminated name */
+  };
+\end{lstlisting}
+
+如同从inotify\_add\_watch()中获取一样，wd表示监视描述符，mask表示监视事件。如果wd标识目录且该目录下文件发生监视事件，name则保存对应的文件名。在这种情况下，len不为零。需要注意的是，len与字符串name长度不一样；name使用null字符进行填充，以保证后续的inotify\_event能够正确对齐。因此，在计算数组中下个inotify\_event结构的偏移时，你必须使用len，而不能使用strlen()。
+
+例如，当wd指向/home/rlove，其掩码为IN\_ACCESS。当读取文件/home/rlove/canon时，name将等于canon，且len至少将为6。相对地，若我们当时以同一掩码直接监视/home/rlove/canon，len将为0，且name长度将为0（注意，一定不要动它）。
+
+cookie通常连接两个独立但相关的事件。我们将在后续章节讨论它。
+
+\subsubsection{读取inotify事件}
+
+获取inotify事件很简单：你仅需读取与inotify实例相关联的文件描述符即可。inotify提供slurping特性，该特性允许你以单个读请求读取多个事件（具体数量受read()缓冲区大小限制）。可变长字段name是读取inotify事件最常用的方法。
+
+之前我们实例化inotify实例，并已增加对该实例的监视。现在，让我们读取未处理的事件：
+
+\begin{lstlisting}
+	char buf[BUF_LEN]__attribute__((aligned(4)));
+  ssize_t len, i = 0;
+  /* read BUF_LEN bytes' worth of events */
+  len = read (fd, buf, BUF_LEN);
+  /* loop over every read event until none remain */
+  while (i < len) {
+    struct inotify_event *event = (struct inotify_event *) &buf[i];
+    printf ("wd=%d mask=%d cookie=%d len=%d dir=%s\n", event->wd, event->mask, event->cookie, event->len, (event->mask & IN_ISDIR) ? "yes" : "no");
+    /* if there is a name, print it */
+    if (event->len)
+      printf ("name=%s\n", event->name);
+    /* update the index to the start of the next event */
+    i += sizeof (struct inotify_event) + event->len;
+  }
+\end{lstlisting}
+
+因为inotify文件描述符的操作与普通文件一样，程序能通过select()，poll()，和epoll()监视它。这允许进程使用单线程在进行其他文件I/O时来多路传输inotify事件。
+
+\textbf{高级inotify事件。}除标准事件外，inotify能产生其他事件：
+
+\begin{eqlist*}
+\item[\textbf{IN\_IGNORED}] wd指向的监视描述符已移除。这种情况可能在用户手动地移除监视或因为监视对象不再存在时发生。我们将随后讨论该事件。
+\item[\textbf{IN\_ISDIR}] 作用对象是目录。（如果未设置，作用对象是文件。）
+\item[\textbf{IN\_Q\_OVERFLOW}] inotify队列溢出。为避免内核内存无限制消耗，内核对事件队列的大小做了限制。未处理的事件数增长到比上限少一时，内核产生该事件，并将其添加至队列尾部。队列被读取，其大小减至限制以下前，不会再有事件产生。
+\item[\textbf{IN\_UNMOUNT}] 监视对象所在的设备未挂载。因此，对象不再有效；内核将移除监视，并产生IN\_IGNORED事件。
+\end{eqlist*}
+
+所有监视能产生这些事件；用户没必要专门设置它们。
+
+程序员必须将掩码视为未处理事件的位掩码。因此，不要使用直接等价测试来检查事件：
+
+\begin{lstlisting}
+  /* Do NOT do this! */
+  if (event->mask == IN_MODIFY)
+    printf ("File was written to!\n");
+  else if (event->mask == IN_Q_OVERFLOW)
+    printf ("Oops, queue overflowed!\n);
+\end{lstlisting}
+
+相应的，应该进行按位测试：
+
+\begin{lstlisting}
+  if (event->mask & IN_ACCESS)
+    printf ("The file was read from!\n");
+  if (event->mask & IN_UNMOUNTED)
+    printf ("The file's backing device was unmounted!\n);
+  if (event->mask & IN_ISDIR)
+    printf ("The file is a directory!\n");
+\end{lstlisting}
+
+\subsubsection{关联''移动''事件}
+
+N\_MOVED\_FROM和IN\_MOVED\_TO事件各自代表移动动作的一半：前者描述从给定位置移除，而后者描述移动到新位置。因此，为了让那些''智能''跟踪文件移动的程序更加有效（例如，索引程序不会对移动的文件重排索引），进程需要将两个移动事件联系起来。
+
+让我们来看一下结构inotify\_event中的cookie字段。
+
+字段cookie，若非零，则包含一个将两事件链接的唯一值。假设进程正在监视/bin和/sbin。假定/bin 具有监视描述符7，而/sbin具有监视描述符8。如果文件/bin/compass移至/sbin/compass，内核将产生两个inotify事件。
+
+第一个事件将使wd等于7，mask等于IN\_MOVED\_FROM，且name为compass。第二个事件将使wd等于8，mask等于IN\_MOVED\_TO，且name为compass。在两个事件中，cookie相同—也比如说，12。
+
+如果文件被重命名，内核仍产生两个事件。两个事件的wd是一样的。
+
+需要注意的是，如果文件移入或移出一个未监视的目录，进程将不会收到其中的一个事件。是否通知第二个符合cookie的事件永远不会到来，则是由程序决定的。
+
+\subsection{高级监视选项}
+
+当创建新的监视时，你可以在mask中增加下列一个或多个值来控制监视行为：
+
+\begin{eqlist*}
+\item[\textbf{IN\_DONT\_FOLLOW}] 如果该值已设置，且path的目标文件为符号链接或路径中有符号链接，则不会沿该链接访问且inotify\_add\_watch()失败。
+\item[\textbf{IN\_MASK\_ADD}] 正常情况下，如果你对已存在监视的文件调用inotify\_add\_watch()，监视掩码会更新为最新提供的mask。如果mask已设置该标记，提供的事件会增至已有的掩码中。
+\item[\textbf{IN\_ONESHOT}] 如果该值已设置，内核给定对象上发生第一个事件后自动移除监视。该监视实际上是“单触发”的。
+\item[\textbf{IN\_ONLYDIR}] 如果该值已设置，只有当提供的对象是目录时才增加监视。如果path指向文件，而非目录，调用inotify\_add\_watch()失败。
+\end{eqlist*}
+
+例如，只有当init.d是个目录，且/etc和/etc/init.d均不是符号链接时，这部分才增加对/etc/init.d的监视：
+
+\begin{lstlisting}
+  int wd;
+ /*
+  * Watch '/etc/init.d' to see if it moves, but only if it is a
+  * directory and no part of its path is a symbolic link.
+  */
+  wd = inotify_add_watch (fd, "/etc/init.d", IN_MOVE_SELF | IN_ONLYDIR | IN_DONT_FOLLOW);
+  if (wd == -1)
+    perror ("inotify_add_watch");
+\end{lstlisting}
+
+\subsection{删除inotify监视}
+
+就像该实例所示，你能通过系统调用inotify\_rm\_watch( )从inotify实例中移除监视：
+
+\begin{lstlisting}
+  #include <inotify.h>
+  int inotify_rm_watch (int fd, uint32_t wd);
+\end{lstlisting}
+
+成功调用inotify\_rm\_watch()会从inotify实例（由文件描述符指向的）fd中移除由监视描述符wd指向的监视，并返回0。
+
+例如：
+
+\begin{lstlisting}
+  int ret;
+  ret = inotify_rm_watch (fd, wd);
+  if (ret)
+    perror ("inotify_rm_watch");
+\end{lstlisting}
+
+失败时，系统调用返回-1，并使用下列两个值设置errno：
+
+\begin{eqlist*}
+\item[\textbf{EBADF}] 无效的inotify实例fd。
+\item[\textbf{EINVAL}] wd不是给定inotfy实例上的有效监视描述符。
+\end{eqlist*}
+
+当移除监视时，内核产生IN\_IGNORED事件。内核在手动移除监视和其他操作所引发的删除监视时都会发送该事件。例如，当监视的文件已删除，文件的所有监视也被移除。因此，内核发送IN\_IGNORED。该特性可以使应用程序用专门IN\_IGNORED事件处理函数来强化对事件移除处理。对于类似GNOME’s Beagle搜索架构这种需要管理大量复杂的数据结构上的监视的应用是非常有帮助的。
+
+\subsection{获取事件队列大小}
+
+未处理事件队列大小可以通过在inotify实例文件描述符上执行ioctl（参数为FIONREAD）来获取。请求的第一个参数获得以无符号整数表示的队列的字节长度：
+
+\begin{lstlisting}
+  unsigned int queue_len;
+  int ret;
+  ret = ioctl (fd, FIONREAD, &queue_len);
+  if (ret < 0)
+    perror ("ioctl");
+  else
+    printf ("%u bytes pending in queue\n", queue_len);
+\end{lstlisting}
+
+记住，请求所返回的是队列的字节大小，而非队列的事件数。程序可以使用结构inotify\_event（通过sizeof()获取）的大小和对字段name平均大小的猜测，来估算事件数。然而更有帮助的是，进程可以通过未处理的字节数来获知将要读取的长度。
+
+头文件<sys/ioctl.h>定义了常量FIONREAD。
+
+\subsection{销毁inotify实例}
+
+销毁inotify实例及与其关联的监视和关闭实例的文件描述符一样简单：
+
+\begin{lstlisting}
+  int ret;
+  /* 'fd' was obtained via inotify_init( ) */
+  ret = close (fd);
+  if (fd == -1)
+    perror ("close");
+\end{lstlisting}
+
+当然，与一切文件描述符一样，内核自动关闭文件描述符，并在进程退出时回收资源。

@@ -1,0 +1,52 @@
+% -*-coding: utf-8 -*-
+
+% 硕博类型 的一些定义
+
+%% 导言区使用中文
+\makeatletter
+\@tempcnta=128
+\loop \catcode\@tempcnta=13 \ifnum\@tempcnta<255 \advance \@tempcnta \@ne
+\repeat
+\makeatother
+
+\newif\ifxueweidoctor %判断论文类型
+\newif\ifxueweimaster
+\def\temp{Doctor}
+\ifx\temp\xuewei
+  \xueweidoctortrue  \xueweimasterfalse
+\fi
+\def\temp{Master}
+\ifx\temp\xuewei
+  \xueweidoctorfalse  \xueweimastertrue
+\fi
+
+\ifxueweidoctor
+  \newcommand{\cxuewei}{博士}
+  \newcommand{\exuewei}{Doctor}
+  \newcommand{\exueweier}{Doctoral}
+  \newcommand{\xueweishort}{博}
+\fi
+
+\ifxueweimaster
+  \newcommand{\cxuewei}{硕士}
+  \newcommand{\exuewei}{Master}
+  \newcommand{\exueweier}{Master}
+  \newcommand{\xueweishort}{硕}
+\fi
+
+
+\ifxueweidoctor
+  \def\oneortwoside{twoside}
+\fi
+
+\ifx\oneortwoside\undefined
+  \def\oneortwoside{twoside}
+\fi
+
+\newif\ifoneortwoside
+\def\temp{twoside}
+\ifx\temp\oneortwoside
+  \oneortwosidetrue
+\else
+  \oneortwosidefalse
+\fi

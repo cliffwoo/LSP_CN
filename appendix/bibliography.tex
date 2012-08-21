@@ -1,0 +1,74 @@
+\BiAppChapter{参考书目}{}
+这份书目包括了系统编程相关的推荐读物,分为四个部分进行介绍。阅读本书时并不需要读这些著作。它们是我认为在相关主题上最好的书。如果你希望深入了解某些主题，我强烈推荐这些书。
+
+部分书籍所讨论的内容是假设本书的读者已经熟悉的(例如C语言)。某些则是对本书的有效补充，例如介绍gdb，Subversion（svn），以及操作系统设计方面的书籍。另外一些所讨论的问题超出了本书的范围(例如套接字的多线程编程)。无论其内容如何，我向大家推荐所有的书。当然，这份书单算不上详尽——你可以自由选择其他读物。
+
+\BiSection{C语言程序设计的相关书籍}{}
+以下书籍介绍了系统编程的通用语言--- C语言。如果你不能熟练地编写C语言代码，以下的书籍（辅以大量的练习！）应该能在这方面提供帮助。至少，第一本——以K\&R而广为人知——是非常适合阅读的。它简短的篇幅很好的体现了C语言的简单性。
+
+\textit{The C Programming Language}, 2nd ed. Brian W. Kernighan and Dennis M. Ritchie.
+    Prentice Hall, 1988.
+    这本书由C程序设计语言的作者和他的伙伴所著，被称作C语言圣经。
+
+\textit{C in a Nutshell}. Peter Prinz and Tony Crawford. O’Reilly Media, 2005.
+    一本很好的关于C语言和C标准库的书籍。
+\textit{C Pocket Reference}. Peter Prinz and Ulla Kirch-Prinz. Translated by Tony Crawford.
+    O’Reilly Media, 2002.
+    一份简明扼要的C语言参考，已经更新到最新的ANSI C99标准。
+\textit{Expert C Programming}. Peter van der Linden. Prentice Hall, 1994.
+    该书对C语言中较少为人所知的部分进行了一次精彩讨论，行文中闪现着作者令人惊奇的才智和幽默感。该书充满了无厘头的笑话，不过我喜欢。
+\textit{C Programming FAQs: Frequently Asked Questions}, 2nd ed. Steve Summit. Addison-Wesley, 1995.
+    
+    这本大部头囊括了超过400个C程序设计语言的常见问题（包括答案）。许多FAQ在C语言专家眼中是小菜一碟，但对于一些重要问题的问答，即使是最博学的C程序员都会被雷到。如果你能解决所有这些“怪物”，你绝对是一个C语言忍者！该书唯一不足就没有跟上ANSI C99，而这肯定会带来一些变化（我在自己手头的书中已经做了修正）。需要注意的是，有一份在线版本的貌似已经做了更新。
+
+\BiSection{Linux编程的相关书籍}{}
+下面推荐的书籍主要介绍Linux编程的相关主题，其中包括了本书没有讨论的主题（套接字，IPC，以及pthreads），和Linux编程工具（CVS，GNU Make，以及Subversion）。
+
+\textit{Unix Network Programming, Volume 1: The Sockets Networking API}, 3rd ed. W. Rich-
+    ard Stevens et al. Addison-Wesley, 2003.
+    套接字API的绝对巨著；可惜并不是针对Linux的，不过最近更新到了IPv6。
+
+\textit{UNIX Network Programming, Volume 2: Interprocess Communications}, 2nd ed.
+   W. Richard Stevens. Prentice Hall, 1998.
+    关于进程间通信（IPC）的绝佳讨论。
+
+\textit{PThreads Programming: A POSIX Standard for Better Multiprocessing}. Bradford
+   Nichols et al. O’Reilly Media, 1996.
+    关于POSIX线程API---pthreads的评述。
+
+\textit{Managing Projects with GNU Make}, 3rd ed. Robert Mecklenburg. O’Reilly Media,
+   2004.
+    关于GNU Make---Linux上建立软件项目的经典工具的绝佳描述。
+
+\textit{Essential CVS}, 2nd ed. Jennifer Versperman. O’Reilly Media, 2006.
+    关于CVS---Unix系统上版本控制和源码管理的经典工具的绝佳描述。
+
+\textit{Version Control with Subversion}. Ben Collins-Sussman et al. O’Reilly Media, 2004.
+    关于Subversion---Unix系统上版本控制和源码管理的优秀工具的令人惊奇的叙述，由Subversion的三位作者完成。
+
+\textit{GDB Pocket Reference}. Arnold Robbins. O’Reilly Media, 2005.
+    一份gdb---Linux调试器的袖珍指南。
+
+\textit{Linux in a Nutshell}, 5th ed. Ellen Siever et al. O’Reilly Media, 2005.
+    对Linux中各种内容的快速浏览，包括许多Linux开发环境下的工具。
+
+\BiSection{Linux内核的相关书籍}{}
+下面列出的两本书主要涉及Linux内核方面的主题。我们有三重理由来对该主题进行研究。首先，内核提供了对用户空间的系统调用接口。其次，内核的行为和特性会在与其上运行的应用进行交互时体现出来。最后，Linux内核代码非常优美，同时这些书很有意思。
+
+\textit{Linux Kernel Development}, 2nd ed. Robert Love. Novell Press, 2005.
+    该书非常适合给那些希望了解Linux内核设计实现的系统程序员阅读（很显然，我就不必提及我在该主题上的看法了）。该书不仅可作为API参考，同时也对Linux内核中使用的算法以及所做的决策也做了精彩的论述。
+\textit{Linux Device Drivers}, 3rd ed. Jonathan Corbet et al. O’Reilly Media, 2005.
+    本书是在编写Linux内核设备驱动程序方面的绝佳指南，同时也是非常棒的API参考手册。尽管针对的是设备驱动，但书中的讨论可以使各类程序员受益(包括很少探究Linux内核机制的系统程序员)。该书是我在Linux内核方面的必备书籍。
+
+\BiSection{操作系统设计的相关书籍}{}
+这两本书不是针对Linux的，而是从理论上介绍操作系统设计与实现。正如我在本书所强调的那样，对你进行编程其上的系统有一个良好的认识颇有助益。
+
+\textit{Operating Systems}, 3rd ed. Harvey Deitel et al. Prentice Hall, 2003.
+    操作系统设计理论方面的力作，同时还包括将理论付诸实践的顶尖样例分析。在所有操作系统设计书籍中，这是我的最爱：它紧随操作系统的研究发展，易读且详尽。
+
+\textit{UNIX Systems for Modern Architectures: Symmetric Multiprocessing and Caching for Kernel Programming}. Curt Schimmel. Addison-Wesley, 1994.
+   
+    尽管和系统编程的关系不大，但该书为并发的危险性和现代缓存系统提供了绝佳的描述。吐血推荐！
+
+
+

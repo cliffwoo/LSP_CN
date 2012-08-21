@@ -1,0 +1,439 @@
+%& -no-cctspace
+%
+% $Id: CJKpunct.sty,v 1.5 2005/10/18 00:56:34 zlb Exp $
+%
+% This is the file CJKpunct.sty for the CJK package
+%
+% Authors:
+%            Linbo Zhang (zlb@lsec.cc.ac.cn)
+%            Wenchang Sun (sunwch@hotmail.com)
+%
+\def\fileversion{4.6.0}
+\def\filedate{2005/10/18}
+%
+% Changelog:
+%
+% . 2005/10/18
+%
+%   new method to obtain base name of the current font (mytex)
+%   
+% . 2005/10/14
+% 
+%   \ifx\TTFslant\relax ==> \ifx\TTFslant\undefined (mytex)
+%   
+% . 2005/10/11
+%   
+%   use \CJK@plane{25} instead of \CJK@plane{01} (zlb)
+%
+% . 2005/08/28
+%
+%   Redefine \allowbreak
+%
+% . 2004/02/20
+%
+%   Add macros \CJK@charUL@group, \CJK@punctUL@group to work with
+%   packages {ulem}{CJKulem}{CJKfntef}
+%
+%   Remove \CJK@testLastpunctb.
+%
+% . 2004/02/13
+%   Comment out '\makeatletter' and '\makeatother' (ZLB)
+%
+%   Pretty(?)-reformat the source (ZLB)
+%
+% . 2004/02/12
+%   Comment out redefinition of \verbatim - it's incompatible with
+%   some documentclasses (e.g., ltxdoc) (ZLB)
+%
+%   Define the macro \CJK@read@cfg@done to avoid reading XXXkern.cfg
+%   multiple times. (ZLB)
+%
+% . 2004/02/11
+%   Store globally tokens from the file, say, gbksong.tbl, in the macro
+%   \CJKpunct/gbksong.tbl, to avoid reloading the same file. (ZLB)
+%
+%   \CJKpunctrule: surround '... \get@external@font ...' in a group to
+%   avoid unexpected interference. (ZLB)
+%
+% . 2004/02/10
+%   Get the external font name through \get@external@font instead of
+%   using a fixed naming scheme. (ZLB)
+%
+\ProvidesPackage{CJKpunct}[\filedate\space\fileversion]
+
+\endlinechar \m@ne
+
+\newif\ifCJK@punctglue\global\CJK@punctgluefalse
+\newif\ifCJK@lastispunct\global\CJK@lastispunctfalse
+
+\@ifundefined{CJK@nobreakglue}
+  {\global\def\CJK@nobreakglue{\nobreak\CJKglue\nobreak}}{}
+
+\@ifundefined{UL@hskip}{\let\UL@hskip\relax}{}
+
+
+\def\CJK@charUL@group{
+  \ifx\hskip\UL@hskip
+      \egroup
+      \UL@stop
+      \LA@hskip 0pt
+      \UL@start
+      \bgroup
+  \fi}
+
+
+
+\def\CJK@punctUL@group{
+  \ifx\hskip\UL@hskip
+      \egroup
+      \UL@stop
+      \UL@start
+      \bgroup
+  \fi}
+
+
+\def\CJK@testLastpunct{
+  \global\CJK@false
+  \ifCJK@lastispunct
+    \ifnum\lastkern = \tw@
+      \global\CJK@true
+    \else
+      \ifnum\lastkern = \@ne
+        \global\CJK@true
+      \fi
+    \fi
+  \fi}
+
+
+
+%\def\CJK@testLastpunctb{
+%  \global\CJK@false
+%  \ifCJK@lastispunct
+%    \ifnum\lastkern = \@ne
+%      \global\CJK@true
+%    \fi
+%  \fi}
+
+\def\@CJK@kern#1#2#3#4 #5 {
+  \CJK@numbToHex{\CJKtempstra}{`#1}
+  \CJK@numbToHex{\CJKtempstrb}{`#3}
+  \global\expandafter\def\csname
+      @CJK@kern\CJKtempstra\number `#2\CJKtempstrb\number `#4\endcsname{
+    \unkern
+    \unkern
+    \ifx\hskip\UL@hskip
+       \LA@hskip -\CJK@punct@postglue
+    \else
+       \unskip
+    \fi
+    \ifdim #5em=\z@ \else \kern #5em \fi
+    \nobreak
+  }
+}
+\let\GBKkern\@CJK@kern
+
+\gdef\@CJK@lastpunct{}
+
+\def\@CJK@punct#1#2 #3 #4 #5 #6 #7 #8 {
+  % glue and nobreak flag before a punct char
+  \CJK@numbToHex{\CJKtempstra}{`#1}
+  \@CJK@prepunct#1#2#3 #5 %
+  % glue and nobreak flag after a punct char
+  \@CJK@postpunct#1#2#6 #8 %
+  % zero-height rule added before a punct char
+
+  \ifdim #4\p@ = \z@
+    \global\expandafter\let\csname
+      @CJK@prerule\CJKtempstra\number`#2\endcsname=\relax
+  \else
+    \global\expandafter\def\csname @CJK@prerule\CJKtempstra\number`#2\endcsname{
+      \vrule width #4em depth \z@ height \z@
+    }
+  \fi
+
+  % zero-height rule added after a punct char
+  \ifdim #7\p@ = \z@
+    \global\expandafter\let\csname
+      @CJK@postrule\CJKtempstra\number`#2\endcsname=\relax
+  \else
+    \global\expandafter\def\csname
+      @CJK@postrule\CJKtempstra\number`#2\endcsname{
+      \vrule width #7em depth \z@ height \z@
+    }
+  \fi
+}
+
+\def\@CJK@prepunct#1#2#3 #4,#5,#6,#7 {
+  \CJK@numbToHex{\CJKtempstra}{`#1}
+  \ifnum #3#4=\z@%
+    \global\expandafter\def\csname @CJK@preglue\CJKtempstra\number`#2\endcsname{
+      \CJK@testLastpunct
+      \ifCJK@
+        \ifCJK@punctglue
+          \global\CJK@punctgluefalse
+          \unkern\unkern
+          \@tempskipa=\lastskip
+          \unskip
+          \unpenalty
+          \hskip\@tempskipa
+        \fi
+      \else
+        \nobreak
+      \fi
+    }
+  \else
+    \global\expandafter\def\csname @CJK@preglue\CJKtempstra\number`#2\endcsname{
+      \CJK@testLastpunct
+      \ifCJK@
+        \ifCJK@punctglue
+           \global\CJK@punctgluefalse
+           \unkern\unkern
+          \@tempskipa=\lastskip
+          \unskip
+          \unpenalty
+          \hskip\@tempskipa
+        \fi
+      \else
+        \nobreak
+      \fi
+      \if #41
+           \hskip #5em plus #6em minus #7em\relax
+      \fi
+      \if #31\nobreak \fi
+    }
+  \fi
+}
+
+\def\@CJK@postpunct#1#2#3 #4,#5,#6,#7 {%
+  \CJK@numbToHex{\CJKtempstra}{`#1}
+  \ifnum #3#4=\z@
+    \global\expandafter\let\csname
+      @CJK@postglue\CJKtempstra\number`#2\endcsname=\relax
+  \else
+    \global\expandafter\def\csname
+      @CJK@postglue\CJKtempstra\number`#2\endcsname{
+      \if #31\nobreak
+        \global\CJK@punctgluefalse
+        \CJK@kern
+      \fi
+      % Note: we insert the glue here otherwise it might be lost
+      % if the next char is not a Chinese char.
+      %
+      % We also insert a penalty to prevent line break, a negative penalty
+      % might be added by the next Chinese char to allow line break between
+      % them.
+      \if #41
+         \global\CJK@punctgluetrue
+         \penalty \@M % prevent line break between Chinese-ASCII (e.g., '??,')
+         \hskip #5em plus #6em minus #7em%
+         \gdef\CJK@punct@postglue{#5em}
+         \CJK@CJK
+      \fi%
+    }
+  \fi
+}
+
+\@ifundefined{CJK@direction}{\gdef\CJK@direction{}}{}
+\@ifundefined{CJKpunctsymbol}{\global\let\CJKpunctsymbol\CJKsymbol}{}
+
+\global\let\GBKpunct\@CJK@punct
+
+%
+%  Redefine the environment CJK to
+%  Read CJK punctuation rule when CJK font family is set/changed.
+\renewenvironment{CJK}[3][]
+  {\CJKspace\CJK@envStart{#1}{#2}{#3}\CJK@read@cfg}
+  {\CJK@envEnd}
+
+\renewenvironment{CJK*}[3][]
+  {\CJKnospace\CJK@envStart{#1}{#2}{#3}\CJK@read@cfg}
+  {\CJK@envEnd}
+
+% Extract the base name part from the string, say, `gbksong25 at ...'
+%\def\CJKpunct@get@tbl#125 at#2\end{\expandafter\global\expandafter\def\csname
+%  \CJK@enc/\CJK@family/\CJK@series/\CJK@shape.tbl\endcsname{#1}}
+%Wenchang SUN 20051014
+\def\CJK@empty#1{
+  \@tempdimb \f@size\p@
+  \ifx\optional@arg \@empty
+  \else
+    \expandafter\ifx
+     \csname CJK@\mandatory@arg/\f@size/\the\@tempdimb\endcsname \relax
+      \@tempdimb \optional@arg\@tempdimb
+      #1{Font\space shape\space `\curr@fontshape'\space
+         will\space be\MessageBreak
+         scaled\space to\space size\space \the\@tempdimb}
+      \expandafter
+       \gdef\csname CJK@\mandatory@arg/\f@size/\the\@tempdimb\endcsname{}
+    \fi
+  \fi
+  \edef\external@font{
+    \mandatory@arg\CJK@plane\space at \the\@tempdimb}
+  \xdef\font@name{
+    \csname \curr@fontshape/\f@size/\CJK@plane\endcsname}
+   \expandafter\global\expandafter\edef\csname\curr@fontshape @tblbase\endcsname{\mandatory@arg}
+    }
+
+\def\CurrentPunctCfg{}
+\def\CurrentunloadedPunctCfg{}
+\def\CJKpunctrule{
+  %
+  % First, figure out the base name of the current CJK font
+  \ifx\TTFslant\undefinded
+      % --- Method 1: extract the name through NFSS (hacky!!!)
+%%    \expandafter \ifx \csname
+%%    \CJK@enc/\CJK@family/\CJK@series/\CJK@shape.tbl\endcsname \relax
+%%      \bgroup
+%%      \def\CJK@plane{25}
+%%      \usefont{\CJK@enc}{\CJK@family}{\CJK@series}{\CJK@shape}
+%%      \get@external@font
+%%      \expandafter\CJKpunct@get@tbl\external@font\end
+%%      \egroup
+%%    \fi
+%%    \expandafter\let \expandafter \CJK@ttt@punct \csname
+%%      \CJK@enc/\CJK@family/\CJK@series/\CJK@shape.tbl\endcsname
+%%Wenchang SUN 20051014
+    \expandafter \ifx \csname
+       \CJK@enc/\CJK@family/\CJK@series/\CJK@shape  @tblbase\endcsname \relax
+           \savebox\voidb@x{\CJKchar{"D5}{"E2}}
+    \fi
+    \expandafter\lowercase\expandafter{\expandafter
+        \edef\expandafter\CJK@ttt@punct\expandafter{\csname
+            \CJK@enc/\CJK@family/\CJK@series/\CJK@shape  @tblbase\endcsname}}
+  \else
+    % --- Method 2: assume the base name of the current CJK font
+    %       is of the form \lowercase{\CJK@@@enc \CJK@family}
+    %       drawback: does not always work (e.g., c19com.fd)
+    \expandafter\lowercase\expandafter{\expandafter
+      \edef\expandafter\CJK@ttt@punct\expandafter{\CJK@@@enc\CJK@family}}
+  \fi
+
+  \ifx\CJK@ttt@punct\CurrentPunctCfg \else
+    \expandafter \ifx \csname CJKpunct/\CJK@ttt@punct.tbl\endcsname \relax
+      \IfFileExists{\CJK@ttt@punct.tbl}
+        {\edef\CJK@temp{\CJK@ttt@punct.tbl}}
+        {\typeout{\CJK@ttt@punct.tbl not found, using gbksong.tbl}
+     \def\CJK@temp{gbksong.tbl}}
+      \bgroup
+      \catcode`\\=0 \catcode`\%= 14 \catcode`\^^Z=10 %
+      \catcode`\^^I=10 \catcode`\ =10 \catcode`\^^M=5 \catcode`\@=11 %
+      \catcode`.=12 \catcode`,=12 \catcode`-=12 \catcode`+=12 %
+      \catcode`0=12 \catcode`1=12 \catcode`2=12 \catcode`3=12 %
+      \catcode`4=12 \catcode`5=12 \catcode`6=12 \catcode`7=12 %
+      \catcode`8=12 \catcode`9=12 %
+      \catcode`G=11 \catcode`B=11 \catcode`K=11 \catcode`p=11 %
+      \catcode`u=11 \catcode`n=11 \catcode`c=11 \catcode`t=11 %
+      \endlinechar=`\ %
+      \iffalse
+        %--- Method 1: directly input the .tbl file
+        \IfFileExists{\CJK@temp}
+          {\input{\CJK@temp}}
+      {\typeout{Warning: file \CJK@temp\space not found!!!}}
+      \else
+        %--- Method 2: save the .tbl file in a token list to avoid reloading it
+        \let\GBKpunct\relax % ??? To prevent \GBKpunct from being expanded
+        \openin0 \CJK@temp
+        % FIXME: howto display full pathname?
+        \message{(\CJK@temp)}
+        \ifeof0 %
+          \typeout{Warning: file \CJK@temp\space not found!!!}
+      \global\expandafter\def\csname CJKpunct/\CJK@ttt@punct.tbl\endcsname{}
+        \else
+      \@temptokena={}
+      \loop \ifeof0 \else
+        \read0 to\CJK@temp
+        \@temptokena=\expandafter\expandafter\expandafter{\expandafter\the
+          \expandafter\@temptokena\CJK@temp}
+      \repeat
+      \expandafter\def\expandafter\CJK@temp\expandafter{\the\@temptokena}
+      \global\expandafter\let\csname CJKpunct/\CJK@ttt@punct.tbl\endcsname
+        \CJK@temp
+        \fi
+        \closein0
+      \fi
+      \egroup
+    \fi
+    \csname CJKpunct/\CJK@ttt@punct.tbl\endcsname   % Execute tokens
+    \global\let\CurrentPunctCfg\CJK@ttt@punct
+  \fi
+}
+
+\def\CJK@read@cfg{
+  \ifx \CJK@read@cfg@done \undefined    % only load XXXkern.cfg once
+    \IfFileExists{\CJK@@@enc kern.cfg}
+      {{
+    \catcode`\\=0 \catcode`\%= 14 \catcode`\^^Z=10 %
+    \catcode`\^^I=10 \catcode`\ =10 \catcode`\^^M=5 \catcode`\@=11 %
+    \catcode`.=12 \catcode`,=12 \catcode`-=12 \catcode`+=12 %
+    \catcode`0=12 \catcode`1=12 \catcode`2=12 \catcode`3=12 %
+    \catcode`4=12 \catcode`5=12 \catcode`6=12 \catcode`7=12 %
+    \catcode`8=12 \catcode`9=12 %
+    \catcode`G=11 \catcode`B=11 \catcode`K=11 \catcode`p=11 %
+    \catcode`u=11 \catcode`n=11 \catcode`c=11 \catcode`t=11 %
+    \endlinechar=`\ %
+    \input{\CJK@@@enc kern.cfg}
+      }}
+      {\typeout{Warning config file \CJK@@@enc kern.cfg not found.}}
+    \gdef\CJK@read@cfg@done{}
+  \fi
+}
+
+\let\oldCJKglue\CJKglue          %%  DO NOT change!!
+
+\def\CJK@loadChr#1{
+  \expandafter\ifx\csname CJK@#1Chx\endcsname \relax
+    {\catcode`\%=14 \CJK@input{#1.chx}}
+  \fi
+
+  \edef\CJK@temp{#1}
+  \ifx\CJK@temp \CJK@actualChr
+  \else
+    \csname CJK@#1Chx\endcsname
+    \CJK@global\edef\CJK@actualChr{#1}
+  \fi}
+
+\def\oldCJK@loadChr#1{
+  \expandafter\ifx\csname CJK@#1Chr\endcsname \relax
+    {\catcode`\%=14 \CJK@input{#1.chr}}
+  \fi
+
+  \edef\CJK@temp{#1}
+  \ifx\CJK@temp \CJK@actualChr
+  \else
+    \csname CJK@#1Chr\endcsname
+    \CJK@global\edef\CJK@actualChr{#1}
+  \fi}
+
+\def\CJKplainout{
+   \CJK@global\edef\CJK@gtemp{\CJK@actualChr}
+   \CJK@global\def\CJK@actualChr{}
+   \oldCJK@loadChr{\CJK@gtemp}
+}
+
+\def\CJKnormalout{
+   \CJK@global\edef\CJK@gtemp{\CJK@actualChr}
+   \CJK@global\def\CJK@actualChr{}
+   \CJK@loadChr{\CJK@gtemp}
+}
+
+\DeclareTextFontCommand{\texttt}{\CJKplainout\ttfamily}
+
+\DeclareOption{user}{\global\def\CJKpunctrule{}}
+\ProcessOptions\relax
+
+%%%\def\verbatim{\CJKplainout\renewcommand{\CJKglue}{}\@verbatim \frenchspacing\@vobeyspaces \@xverbatim}
+%%%\def\endverbatim{\if@newlist \leavevmode\fi\endtrivlist\CJKnormalout\let\CJKglue\oldCJKglue}
+
+\def\allowbreak{%
+  \ifnum\lastkern=\@ne %
+    % previous character is a Chinese character
+    \unkern \unkern
+    \edef\@tempa{\the\lastskip}%
+    \unskip \unpenalty \hskip\@tempa \kern \m@ne sp \kern \@ne sp %
+  \else
+    \penalty \z@
+  \fi}
+
+\endlinechar `\^^M
+
+\endinput

@@ -1,0 +1,912 @@
+\ifx\atempxetex\usewhat
+\XeTeXinputencoding "utf-8"
+\fi
+\defaultfont
+
+\chapter{高级进程管理}
+
+在第五章，我们介绍了进程的基本概念，讨论了创建、控制和销毁进程的内核接口。基于这些知识，本章将首先讨论Linux进程调度器及其调度算法，然后描述高级进程管理接口。这些系统调用控制进程的调度语义和行为，从而影响调度器为实现应用或者用户特定需求所作出的决策。
+
+\section{进程调度}
+
+进程调度器是内核中决定哪个进程可以运行的组件，换句话说，进程调度器简称------调度器------是把有限的处理器资源分配给进程的内核子系统。在作出决策的过程中，调度器既要最大化处理器效率，又要让多个进程同时运行、互不影响。
+
+本章，我们会着重讨论“就绪进程”\footnote[1]{译者注:原文 runnable process}。它最重要的特征是该进程是非阻塞的。进行用户交互、大量读写文件、响应I/O和网络事件的进程会花费大量时间来等待资源可用，在相当长的时间内无法转为就绪状态(长是相对于指令运行时间而言)，因此就绪进程首先应该是非阻塞的。一个就绪进程还必须至少有部分“时间片”(调度器分配给进程的运行时间)。内核用一个就绪队列维护所有的就绪进程，一旦某进程耗光它的时间片，内核就将其移出队列，直到所有就绪进程都耗光时间片才考虑将其放回队列。
+
+如果只有一个就绪进程(甚至一个也没有)，调度器就没有什么意义。只有在进程数多于处理器时，调度器才能体现它的价值。在这种情况下，显然有一些进程会等待其他进程运行；决定哪个进程运行，何时运行，运行多长时间也就成了调度器的基本责任。
+
+一个操作系统能在单处理机上交错地运行多个进程，让人感到似乎同时运行多个进程，就称该操作系统是“多任务”的。在多处理机上，多任务操作系统允许进程在不同处理器上并行执行。非多任务操作系统，比如DOS，一次只能运行一个任务。
+
+多任务操作系统分为两大类：协同式和抢占式。Linux实现了后一种形式的多任务，调度器可以要求一个进程停止运行，处理器转而运行另一个进程。这种中止正在运行的进程的行为称做抢占，类似的，进程在被抢占前所运行的时间称之为进程时间片(得名于调度器分配给每个就绪进程的一小片时间)。
+
+在协同多任务系统中，一个进程持续运行直到它自发停止。我们称进程自发停止的行为为让出。理想情况下，会经常发生进程让出，但操作系统绝不可强制要求其让出。因此，一个拙劣或损坏的程序可能运行很长时间，甚至导致整个系统死掉。由于这个原因，现代操作系统几乎都采用抢占多任务机制，Linux也不例外。
+
+2.5内核引入的O(1)进程调度器，是Linux调度\footnote[1]{对于好奇的读者，可以查看内核代码树中的 kernel/sched.c 文件了解细节}的核心。Linux调度算法采用抢占多任务机制，支持多处理器，处理器亲和度，非一致内存访问(NUMA)，实时进程和用户自定义优先级等特性。
+
+\subsection{大O记法}
+O(1)是大O记法的一个例子，常用来表示算法的复杂性和可扩展性。形式地定义：
+\begin{center}
+  if f(x) is O(g(x)),
+
+  then
+
+  $\exists c,x'$ such that $f(x) \le c * g(x), \forall x > x'$
+\end{center}
+
+也就是说，一些算法的代价，以f表示，只要x大于某个初始值$x'$，f就一定小于等于g乘上一个常数，即g大于等于f，g是f的上界。
+
+O(1)也就表明解决问题的代价小于常数c，这就带来极好的保证：无论系统中有多少进程，Linux进程调度器表现如一。对于调度器来说，选择一个新进程来运行至少需要迭代一次进程队列，因而O(1)算法对性能非常重要。在稍简单些的调度器中(包括以前版本的Linux调度器)，随着进程数量的增长，进程队列的迭代会成为潜在的瓶颈。在最好情况下，也会给进程调度带来不确定性。
+
+Linux调度器，在常数时间内运行，不会受到其他因素影响，就没有这样的瓶颈。
+
+\subsection{时间片}
+
+Linux分配给进程的时间片长短对于系统行为和性能非常重要。如果时间片太长，进程必须等待很长时间才能运行，这减小了运行的并行性，用户会察觉到明显的延迟；相反的，时间片太短，大量时间会花费在进程调度上，程序的时间局部性等也不能得到保证。
+
+因而，确定合适的时间片绝非易事。一些系统给予进程长时间片，希望最大化系统吞吐率和整体表现。另一些系统给予较短的时间片，希望获得优秀的交互性能。我们将看到，Linux通过动态分配进程时间片，期望在两方面都做到最好。
+
+注意:进程不一定要在一次运行中耗光所有时间片。一个被分配100ms时间片的进程，可能运行20ms就因为等待键盘输入等资源而阻塞。此时，调度器就会临时地把该进程移出就绪队列；当资源可用后，这个例子中是键盘缓冲区不为空，调度器会唤醒进程。进程会继续运行，耗光剩下的80ms或者又一次阻塞。
+
+\subsection{I/O约束进程 Vs. 处理器约束进程}
+
+持续地消耗所有可用时间片的进程称为“处理器约束进程”\footnote[1]{process-bound}。这类进程渴望CPU时间，消耗掉调度器分配的全部时间。最简单的例子就是无限循环，其他的例子包括科学计算，数学演算和图像处理。
+
+另一方面，多数时间处于等待资源的阻塞状态的进程称为“I/O约束进程”\footnote[2]{I/O-bound}。I/O约束进程经常发起和等待文件I/O，阻塞在键盘输入，或者用户移动鼠标。I/O阻塞程序的例子包括文件实用程序，比如 cp 或者 mv，它们除了请求内核执行I/O操作外，几乎什么也不做；还包括GUI应用程序，大多数时候都在等待用户输入。
+
+处理器约束程序和I/O约束程序得益于调度器对于不同程序类型所采用的不同行为。处理器约束程序得到尽可能长的时间片，从而最大化缓存命中率(时间局部性所致)，尽快完成任务。相反地，I/O约束程序不需要长时间片，因为它们一般在发出I/O请求和阻塞在内核资源前只会运行很短的一段时间。然而，I/O约束程序也能从调度器的持久关注中获益。被唤醒地越快，可调度的I/O请求越多，程序越能够充分地利用系统硬件。更进一步，如果一个在等待用户输入的程序被调度的速度越快，给用户无缝运行的感觉越明显。
+
+平衡处理器约束程序和I/O约束程序的不同需要绝非易事。Linux调度器试图识别和优先对待I/O约束程序：频繁I/O程序增加优先级，处理器约束程序减少优先级。
+
+实际上，很多应用程序是处理器约束和I/O约束的混合体。音频视频解码编码就是一个好例子，许多游戏也是如此。因此对于一个给定程序，不总是能够判定它的倾向，在任意时间，进程都可能有不同的表现。
+
+\subsection{抢占调度}
+
+当一个进程耗光时间片的时候，调度器会中止其运行，开始运行一个新的进程。如果没有其他的就绪进程，内核会给予所有耗光时间片的进程新的时间片，继续运行。这样，即使系统中有高优先级进程---低优先级进程必须等待高优先级进程耗光时间片或者阻塞，所有的进程最终都会运行。这就明确描述了Unix调度中一条不起眼但是非常重要的原则: 所有的进程都必须运行。
+
+如果没有就绪进程，内核会“运行”空闲进程(idle process)。实际上，空闲进程既不是一个进程，也不能实际运行(减少电池消耗)。空闲进程是为了简化调度算法和统计方便而生的特殊例程，空闲时间简化为运行空闲进程的时间。
+
+在进程运行时，如果另一个高优先级进程就绪(也许先前此进程阻塞在键盘输入，用户正好敲入一个单词)，当前运行进程被直接中止，切换到高优先级进程。因此，不会有就绪却没有运行的较高优先级进程，系统中的运行进程一定是最高优先级的可运行进程。
+
+\subsection{线程}
+
+线程是进程中的运行单元，所有的进程都至少有一个线程。每一个线程都独自占有一个虚拟处理器：独自的寄存器组，指令计数器和处理器状态。虽然多数进程都只有一个线程，但是进程实际可以拥有很多线程，每个线程完成不同的任务，但是共享同一地址空间(也就是同样的动态内存，映射文件，目标代码等等)，打开的文件队列和其他内核资源。
+
+Linux内核对于线程的观点独特而有趣。本质上，内核没有线程概念，对于Linux内核来说，所有的线程都是独立的进程。广义上说，两个无关进程和一个进程内的两个线程没有区别。内核把线程简化为共享资源的进程，也就是说，内核把一个进程中的两个线程，简化为共享一系列内核资源(地址空间，打开的文件列表等)的两个不同进程。
+
+多线程编程是基于线程模型的编程技术。Linux平台上线程编程的最常用API是由IEEE Std 1003.1c-1995(POSIX 1995 or POSIX.1c)所标准化的API，开发者们称实现此API的库为“pthreads”。线程编程是一个复杂的课题，相关API也很艰深复杂。因而，pthreads不在本书的讨论范围内，相反，本书把注意力放在建构pthreads库的那些接口上。
+
+\section{让出处理器}
+
+虽然Linux是一个抢占多任务操作系统，但是它也提供了一个系统调用来允许进程主动让出处理器，并通知调度器选择另一个进程来运行。
+% \setmonofont{DejaVu Sans Mono}
+\begin{lstlisting}
+  #include <sched.h>
+  int sched_yield (void);
+\end{lstlisting}
+
+调用 sched\_yield() 函数将中断当前进程，运行一个新进程，就和内核主动抢占进程一样。注意，在多数情况下，系统中没有其他就绪进程，让出的进程会直接恢复运行。由于这种不确定性，加上人们认为可以做更好的选择，这一系统调用并不经常使用。
+
+调用成功返回0，失败返回-1，并设置“errno”。在包括Linux在内的多数Unix系统上，sched\_yield()不可能失败，因此总是返回0。然而，一个严谨的程序员还是会检查返回值:
+
+\begin{lstlisting}
+  if(sched_yield ())
+    perror ("sched_yield");
+\end{lstlisting}
+
+\subsection{合理使用}
+
+在Linux系统这样的抢占多任务系统中，很少有合理使用sched\_yield()的机会。内核完全有能力作出最优化和最有效率的调度决策，这是因为，内核显然比一个独立的应用程序更有资格决定何时抢占哪个进程，协同多任务和抢占多任务两种不同机制来源于对此的不同理解。
+
+那么为什么会有这么一个系统调用呢？这取决于应用程序是否必须等待用户，硬件或者其他进程所触发的外部事件。比如说，如果一个进程必须等待另一个进程，“让出处理器，直到另一个进程完成”，这是一个直观的想法。以一个消费者/生产者模型中简单的消费者实现为例，大概是这样:
+
+\begin{lstlisting}
+  /* the consumer... */
+  do {
+    while (producer_not_ready ())
+    sched_yield ();
+    process_data ();
+  } while (!time_to_quit ());
+\end{lstlisting}
+
+幸运的是，Unix程序员一般不需要这样编写代码。Unix程序通常是事件驱动的，倾向于利用阻塞机制(比如管道)来代替sched\_yield()。这种情况下，消费者从管道读取数据，在必要的时候阻塞等待数据。这就使用户空间进程摆脱了进程协同的责任，交给了内核；而对于内核来说，又可以用进程睡眠的方式来优化管理，并在需要的时候激活。一般来说，Unix程序倾向于使用建立在可阻塞文件描述符基础上的事件驱动机制。
+
+直到最近，有一种情况需要讨厌的sched\_yield():用户空间线程锁。当一个线程试图请求另一个线程已经拥有的锁的时候，该线程会让出处理器直到锁可用。在内核不支持用户空间锁的时候，这种方法最简单高效。然而，现代Linux线程实现(the New POSIX Threading Library, or NPTL)迎来了一个基于快速用户互斥锁的优化方案，即在内核中提供用户空间锁的支持。
+
+sched\_yield()的另一个应用是“变得更友好”(playing nicely): 一个处理器密集的程序可以不时调用sched\_yield()来减少对系统的影响。出发点不错，但是也有两个缺点。第一，内核能比一个独立进程作出更好的全局调度决策，因此，平缓系统操作的责任应该由调度器承担，而不是用户进程。对此，调度器也恰好有奖励I/O密集程序，惩罚处理器密集程序的策略。第二，减轻处理器密集程序带来的负担，从而保证其他程序的运行，这是用户的责任，而不是应用程序。用户可以通过后面将讨论的``nice"命令来给应用程序传递用户关于性能的设置。
+
+\subsection{让出处理器方法的过去和现状}
+
+在2.6内核以前，调用sched\_yield()产生一个很简单的作用。如果有其他就绪进程，内核会运行该进程，并把当前进程放到就绪队列的末尾，短期内就会再次调度到此进程。当然也很有可能没有其他进程，那么当前进程继续运行。
+
+2.6内核做了调整，算法如下:
+
+\begin{enumerate}
+\item 进程是实时进程吗？如果是，将其放到就绪队列的末尾，返回(和以前一样)。如果不是，到下一步。(想了解实时进程，请阅读本章“实时系统”一节。)
+\item 把该进程从就绪队列移出，放到到期进程队列中。也就是说，只有当所有就绪进程运行，耗光时间片后，该进程才能和所有的到期进程一道重新进入就绪队列。
+\item 调度下一个就绪进程运行。
+\end{enumerate}
+
+因此，调用sched\_yield()的实际作用就和进程耗光时间片一样，这不同于早期内核的处理，那时sched\_yield()的效果很轻微(等同于“如果有一个进程就绪等待，运行它，然后回到我”)。
+
+改变的原因之一是为了预防称之为“乒乓”的不合理情况发生。想象两个进程 A 和 B ，都调用了sched\_yield()。 假设他们俩是仅有的两个就绪进程(也可以有其他进程，但这些进程没有时间片)。如果是以前的sched\_yield()，内核都会轮流调度两个进程，每个进程都请求执行其他进程，直到两个进程的时间片都用光。我们可以画一个图表来描述内核的调度选择，大概是``A, B, A, B, A, B"等等，因此得名“乒乓”。
+
+2.6内核就不会发生这种情况。当A请求让出处理器的时候， 调度器就会将它移出就绪队列。 类似地，B也会被移出。当没有就绪进程的时候，调度器当然不会考虑运行A 还是B, 也就防止了乒乓效应，允许其他进程获得处理器时间。
+
+因此，当进程请求让出处理器的时候，它就应该是真的要让出处理器!
+
+\section{进程优先级}
+
+\begin{wrapfigure}{l}{2.5cm}
+  \includegraphics[width=2cm,clip]{paipai.png}
+\end{wrapfigure}
+\mbox{}\begin{flushleft}本节讨论常用的非实时进程，实时进程需要不同的调度标准和独立的优先级系统，留到以后讨论。\end{flushleft}
+
+Linux不是随意地进行进程调度。进程都有一个影响他们何时运行，运行多久的优先级。历史上，Unix把这个优先级称为“nice values”，因为低优先级的进程往往允许其他进程分享更多的处理器时间，也就意味着该进程对系统的其他进程更加友好。
+
+``nice value"是在进程运行的时候指定的，Linux调度器基于这样的原则来调度：高优先级的程序总是先运行。同时，nice值也指明了进程的时间片长度。
+
+合法的优先级在-20到19之间，默认为0。有些让人疑惑的是，nice值越低，优先级越高，时间片越长；相反，nice值越高，优先级越低，时间片越短，增加一个进程的nice值意味着该进程对系统更友好。数字令人容易混淆。当我们说一个进程有高优先级的时候，我们认为该进程应该更快地开始运行，运行更长的时间，显然对系统的友好度更低。
+
+\subsection{nice()}
+
+Linux提供了获取和设置进程nice值的系统调用，最简单的就是nice():
+
+\begin{lstlisting}
+  #include <unistd.h>
+  int nice (int inc);
+\end{lstlisting}
+
+成功调用nice()将在现有优先级上增加inc，并返回新值。只有拥有CAP\_SYS\_NICE能力(实际上，就是root所有的进程)才能够使用负值inc，减少友好度，增加优先级。因此，非root进程只能降低优先级(增加nice值)。
+
+遇到错误，nice()返回-1,但是-1也可能是成功时的返回值，因此为了区别成功与否，在调用前应该对errno置0，调用后检查。举例来说:
+
+\begin{lstlisting}
+  int ret;
+  errno = 0;
+  ret = nice (10);  /* increase our nice by 10 */
+  if (ret == -1 && errno !=0)
+    perror ("nice");
+  else
+    printf ("nice value is now %d\n", ret);
+\end{lstlisting}
+
+对于nice()，Linux只会返回一种错误号: EPERM，表明进程试图提高优先级而又没有CAP\_SYS\_NICE能力。其他的系统还会在nice值超出范围的时候返回 EINVAL，而Linux会把非法的值放到对应的边界上。
+
+传递参数0给nice()是获得当前优先级的简单方法:
+
+\begin{lstlisting}
+  printf("nice value is currently %d\n", nice (0));
+\end{lstlisting}
+
+通常，进程需要设定绝对的优先级而不是相对增量的时候，可以用下边的代码:
+
+\begin{lstlisting}
+  int ret, val;
+  /* get current nice value */
+  val = nice (0);
+  /* we want a nice value of 10 */
+  val = 10 - val;
+  errno = 0;
+  ret = nice (val);
+  if (ret == -1 && errno != 0)
+    perror ("nice");
+  else
+    printf ("nice value is now %d\n", ret);
+\end{lstlisting}
+
+\subsection{getpriority()和setpriority()}
+
+更好的解决方案是用getpriority()和setpriority()系统调用，可以带来更多的控制能力，当然使用起来也更为复杂：
+
+\begin{lstlisting}
+  #include <sys/time.h>
+  #include <sys/resource.h>
+  int getpriority (int which, int who);
+  int setpriority (int which, int who, int prio);
+\end{lstlisting}
+
+两个函数作用于``which"和``who"指定的进程，进程组或者用户，其中“which“的取值为 PRIO\_PROCESS、 PRIO\_PGRP 或者 PRIO\_USER，对应地，“who”就说明了进程ID，进程组ID或者用户ID。当“who”是0的时候，分别是当前进程，当前进程组或者当前用户。
+
+getpriority()返回指定进程中的最高优先级(nice值最小)，setpriority()则将所有进程的优先级都设为“prio“。同nice()一样，只有拥有CAP\_SYS\_NICE能力的进程能够提高一个进程的优先级(降低nice值)，更进一步地说，只有这样的进程才能够调整不属于当前用户的进程的优先级。
+
+getpriority()遇到错误的时候返回-1，但-1也可能是成功的返回值，因此同nice()一样，为了处理错误情况，程序员必须在调用前清空error值。setpriority()就不必如此，它总是成功返回0，错误返回-1。
+
+下面是得到当前进程优先级的例子:
+
+\begin{lstlisting}
+  int ret;
+  ret = getpriority (PRIO_PROCESS, 0);
+  printf ("nice value is %d\n", ret);
+\end{lstlisting}
+
+设置当前进程组所有进程优先级为10的例子:
+
+\begin{lstlisting}
+  int ret;
+  ret = setpriority (PGIO_PGRP, 0, 10);
+  if (ret == -1)
+    perror ("setpriority");
+\end{lstlisting}
+
+错误的时候，函数会设置errno为以下几个值:
+
+\begin{eqlist*}
+\item[EACCESS] 进程没有CAP\_SYS\_NICE能力，却企图提高进程优先级。(仅适用于setpriority())
+\item[EINVAL] ``which"的值不在PRIO\_PROCESS, PRIO\_PGRP或PRIO\_USER之中。
+\item[EPERM] 指定的进程有效用户ID和调用进程有效用户ID不一致，且调用进程没有CAP\_SYS\_NICE能力。(仅适用于setpriority())
+\item[ESRCH] 不存在符合“which”和“who”的进程。
+\end{eqlist*}
+
+\subsection{I/O优先级}
+
+作为进程优先级的补充，Linux还允许进程指定I/O优先级，内核I/O调度器(参考第四章)总是优先响应来自于高I/O优先级的请求。
+
+缺省情况下，I/O调度器用进程友好度决定I/O优先级，因此，设置优先级自动改变I/O优先级。然而，Linux内核还有两个系统调用来单独获取和设置I/O:
+
+\begin{lstlisting}
+  int ioprio_get (int which, int who)
+  int ioprio_set (int which, int who, int ioprio)
+\end{lstlisting}
+
+不幸地是，内核没有导出这两个系统调用，glibc也没有提供用户空间接口。没有glibc的支持，函数用起来是相当麻烦的。以后，如果未来glibc开始支持的时候，接口有可能和系统调用不同。在这之前，有两个可移植方法来操作进程I/O优先级:通过nice值，或者类似于``ionice"\footnote[1]{ionice是util-linux包的一部分，可以从http://www.kernel.org/pub/linux/utils/utl-linux得到，以GNU General Public License v2授权}的实用程序。
+
+不是所有的I/O调度器都支持I/O优先级，特别地，Complete Fair Queuing(CFQ) I/O调度器支持，其他的标准调度器不支持。如果I/O调度器不支持I/O优先级，相关系统调用被忽略而没有任何提示信息。
+
+\section{处理器亲和度}
+
+Linux可以在一个系统中使用多处理器，除了启动进程，支持多处理器的大多数工作都依赖于进程调度器。在对称多处理机(SMP)上，进程调度器必须决定每个CPU上运行哪个进程，因此，必须解决两个问题:调度器必须充分利用系统的处理器，尽量避免处理器空闲。然而，如果一个进程曾在某一CPU上运行，进程调度器还应该尽量把它放在同一CPU上，因为处理器间的进程迁移会带来性能损失。
+
+最大的性能损失来自于迁移带来的缓存效应\footnote[2]{译者注:cache effects}。现代SMP系统的设计中，每个处理器的缓存是各自独立的，也就是说，处理器并不共享缓存中的数据。因此，当进程迁移到新处理器上后写入新数据到内存时，原有处理器的缓存就过期了，这可能带来冲突。为了避免这种情况，缓存读入新的一块内存数据时标记其他缓存无效。因此，在任意时刻，任意数据仅在一个处理器的缓存中有效(假设该数据被缓存)。当进程迁移的时候，就有两方面的相关损失:进程不再能访问缓存数据且原有缓存中的数据必须标记为无效。考虑到这些损失，进程调度器应该尽量让进程停留在一个处理器。
+
+实际上，进程调度器的两个目标有潜在的冲突。如果一个处理器比其他处理器有大得多的进程负载---或者更糟一些，一个处理器繁忙，其他处理器空闲---重新调度进程到低负载CPU上就是有意义的。决定何时移动进程来避免不平衡，称为负载均衡，对SMP机器的性能至关重要。
+
+处理器亲和度表明一个进程停留在同一处理器上的可能性。术语“软亲和度”(soft affinity)表明调度器持续调度进程到同一处理器上的自然倾向，从上文的讨论可以看到，这是非常有价值的特性。Linux调度器尽可能地这样做，只有当负载极端不平衡的时候，才考虑迁移进程；从而，最小化迁移的缓存效应，还能保证系统中的处理器负载基本平衡。
+
+然而有些时候，用户或者应用程序需要保证进程和处理器间的绑定，这通常发生在进程非常依赖缓存\footnote[3]{译者注: cache-sensitive}，期望停留在同一处理器的情况下。术语“硬亲和度”(hard affinity)描述了强制内核保证进程到处理器的绑定。
+
+\subsection{sched\_getaffinity() 和 sched\_setaffinity()}
+
+进程从父进程继承处理器亲和度；在默认情况下，可能运行在任何CPU上。Linux提供两个系统调用来获取和设定进程的硬亲和度\footnote[3]{译者注: hard affinity}:
+
+\begin{lstlisting}
+  #define _GNU_SOURCE
+  #include <sched.h>
+  typedef struct cpu_set_t;
+  size_t CPU_SETSIZE;
+  void CPU_SET (unsigned long cpu, cpu_set_t *set);
+  void CPU_CLR (unsigned long cpu, cpu_set_t *set);
+  int CPU_ISSET (unsigned long cpu, cpu_set_t *set);
+  void CPU_ZERO (cpu_set_t *set);
+  int sched_setaffinity (pid_t pid, size_t setsize, const cpu_set_t *set);
+  int sched_getaffinity (pid_t pid, size_t setsize, const cpu_set_t *set);
+\end{lstlisting}
+
+调用sched\_getaffinity()可以获得由``pid"指定的进程的处理器亲和度，存储在cpu\_set\_t类型中，可以用特殊的宏访问。如果“pid”是0，则得到当前进程的亲和度。“setsize”参数是cpu\_set\_t的大小，glibc用它来保证将来类型变化时依然具有兼容性。成功的时候，函数返回0；错误返回-1，并设置errno。例子如下:
+
+\begin{lstlisting}
+  cpu_set_t set;
+  int ret, i;
+  CPU_ZERO (&set);
+  ret = sched_getaffinity (0, sizeof (cpu_set_t), &set);
+  if (ret == -1)
+  perror ("sched_getaffinity");
+  for (i = 0; i< CPU_SETSIZE; i++) {
+    int cpu;
+    cpu = CPU_ISSET (i, &set);
+    printf ("cpu=%i is %s\n", i, cpu ? "set" : "unset" );
+  }
+\end{lstlisting}
+
+在调用前，我们用CPU\_ZERO清零所有的二进制位，然后开始从0到CPU\_SETSIZE在set上的迭代。注意，CPU\_SETSIZE并不是set的大小---显然不能用它表示setsize---而是set可能表示的处理器数量。因为现在的实现用1个二进制位表示一个处理器，所以CPU\_SETSIZE比sizeof(cpu\_set\_t)大得多。我们用CPU\_ISSET检查系统中的处理器是否被绑定到这个进程，0表示否，非0则已经绑定。
+
+只有实际存在的处理器才能被绑定，因此，在两个处理器的系统上运行上述代码将得到如下结果:
+
+\begin{verbatim}
+  cpu=0 is set
+  cpu=1 is set
+  cpu=2 is unset
+  cpu=3 is unset
+  ...
+  cpu=1023 is unset
+\end{verbatim}
+
+从输出中可以看到，当前的CPU\_SETSIZE(从0开始)是1,024。
+
+我们考虑CPU \#0和\#1这两个仅存的处理器，也许我们期望保证我们的进程仅仅运行在CPU \#0上。代码如下:
+
+\begin{lstlisting}
+  cpu_set_t set;
+  int ret, i;
+  CPU_ZERO (&set);        /* clear all CPUs */
+  CPU_SET (0, &set);      /* allow CPU #0 */
+  CPU_CLR (1, &set);      /* forbid CPU #1 */
+  ret = sched_setaffinity (0, sizeof (cpu_set_t), &set);
+  if (ret == -1)
+    perror ("sched_setaffinity");
+  for (i = 0; i < CPU_SETSIZE; i++) {
+    int cpu;
+    cpu = CPU_ISSET (i, &set);
+    printf ("cpu=%i is %s\n", i, cpu ? "set" : "unset");
+  ｝
+\end{lstlisting}
+
+  我们首先总是用CPU\_ZERO清零set，然后用CPU\_SET对CPU \#0置1, 用CPU\_CLR对CPU \#1置0。已经清零了整个set，所以CPU\_CLR清零是多余的，仅仅是处于完整性的考虑。
+
+  在同样的两处理器系统上运行，得到了稍微不同的输出:
+
+\begin{verbatim}
+  cpu=0 is set
+  cpu=1 is unset
+  cpu=2 is unset
+  ...
+  cpu=1023 is unset
+\end{verbatim}
+
+  现在CPU \#1被禁止，该进程无论如何总是运行在CPU \#0上。
+
+  可能的四种错误号如下:
+
+\begin{eqlist*}
+\item[EFAULT] 提供的指针在进程的地址空间外或者无效。
+\item[EINVAL] 系统中没有处理器被允许调度(仅适用于sched\_setaffinity())，或者setsize小于内核中表示处理器集合的数据结构的大小。
+\item[EPERM] pid指明的进程不属于调用进程的有效用户ID，而且该进程没有CAP\_SYS\_NICE能力。
+\item[ESRCH] pid指定的进程不存在。
+\end{eqlist*}
+
+\section{实时系统}
+
+  在计算机领域，术语“实时”往往是混乱和误解的根源。如果一个系统受到操作期限\footnote[1]{译者注: operational deadlines}---请求和响应之间的最小量和命令次数---的支配，就称该系统是“实时”的。几乎在所有汽车上都可以看到的“防抱死(ABS)“系统就是一个类似的实时系统。在这个系统中，当踩下刹车的时候，计算机通过一秒内多次施加和释放最大刹车压力来调节刹车压力，以防止轮胎“锁死”，保证刹车性能，避免汽车失控。而系统的操作期限就是系统能够多快地相应轮胎“锁死”，能够多快地施加刹车压力。
+
+  包括Linux在内的多数现代操作系统都提供了某些层次的实时支持。
+
+\subsection{软硬实时系统}
+
+  实时系统分为软硬实时系统两大类。硬实时系统对于操作期限要求非常严格，超过期限就会产生失败，后果很严重。另一方面，软实时系统却不认为超过期限是一个严重的失败。
+
+  硬实时系统很容易分辨:防抱死系统、军用武器系统、医疗设备、信号处理都是比较典型的例子。软实时系统则不太容易分辨，一个比较明显的例子是视频处理程序: 如果超过了操作时限，用户会注意到一些质量下降，但是少量的丢帧还是可以忍受的。
+
+  很多应用都有强制的时间要求，如果不能满足要求就会损害用户体验，多媒体应用，游戏和网络程序都在其中。文字编辑器怎么样呢？如果程序不能很快地响应键盘输入，体验就很差，用户会感到愤怒或者有很深的挫败感。它是软实时应用吗？当然，当开发者写程序的时候，他们意识到必须及时地响应输入。但它构成一个强制的操作期限吗？软实时程序的定义说得很清楚。
+
+  和一般看法不同，实时系统并不一定快。实际上，在相同的硬件条件下，实时系统更可能慢于非实时系统，原因在于，即使不考虑其他因素，支持实时进程也会增加系统的负担。类似的，软硬实时系统的区分也不等同于操作时限的长短。在检测到过量的中子流出的几秒钟内，如果SCRAM系统不把控制杆放低一些的话，核反应堆就可能过热。这就是一个有漫长操作期限的硬实时系统。相反地，如果一个视频播放器不能够在100ms内填充回放缓冲区，就会跳过一些帧或者发出结结巴巴的声音，这是一个对操作期限要求较高的软实时系统。
+
+\subsection{延时，抖动和截止期限}
+
+  延时指刺激发生直到响应运行的时间，如果延时小于等于操作期限，系统运行正常。在很多硬实时系统中，操作期限和延时是等价的，系统以固定的间隔在确定时刻处理请求。在软实时系统中，响应不需要那么精确，延时也会出现一些变化，响应只需要在截止期限内发生就行。
+
+  通常很难测量延时，因为测量它必须知道刺激发生的时间。然而，给请求打上时间戳，往往影响及时响应的能力。因此，一般的测量延迟的方法都不这么处理；实际上，人们测量成功响应时间的变化。连续事件中间的时间变化称之为抖动，而不测量延时。
+
+  举例来说，考虑每10ms一次的刺激。为了测量系统性能，我们给响应打上时间戳，确保每10ms响应一次，几次测量之间的偏差就是抖动，我们所测量的就是连续响应间的变化。不知道请求发生的时间，我们也就不知道请求和响应之间的时间差；即使知道请求每10ms一次，我们也不知道第一次请求何时开始。或许更令人惊讶的是，很多测量延时的尝试都搞错了，实际得到了抖动而不是延时。可以肯定的是，抖动是一个有用的测量值，如此的测量也是非常有用的。无论如何，我们必须面对现实！
+
+  硬实时系统经常出现一些非常小的抖动，因为他们在一段时间后而不是那段时间内响应刺激。系统追求零抖动，从而使延时等于操作间隔。如果延时超过间隔，就会失败。
+
+  软实时系统对抖动更宽容。在这些系统中，理想情况下响应时间会在操作间隔内，通常快一些，有时慢一点。因此，抖动就可以完美地替代延时作为性能测量的目标了。
+
+\subsection{Linux的实时支持}
+
+  Linux通过IEEE Std 1003.1b-1993(缩写为POSIX 1993或POSIX.1b)定义的一系列系统调用来为应用程序提供软实时支持。
+
+  技术上讲，POSIX标准并没有说明它提供的实时支持是软还是硬。实际上，POSIX标准仅仅描述了一些基于优先级的调度策略，操作系统服从何种时间约束取决于操作系统设计者。
+
+  过去这些年，Linux内核在不牺牲性能的情况下，取得了越来越好的实时支持，提供越来越小的延时和更加一致的抖动。主要原因在于改进能够帮助很多类应用程序，比如桌面和I/O约束进程，而不仅仅是实时应用；改进对于Linux在嵌入式和实时领域的成功也有很大贡献。
+
+  不幸的是，许多嵌入式和实时领域对Linux内核的修改仅仅存在于定制的Linux解决方案中，独立于主流的官方内核。其中的一些修改进一步减少延时，甚至达到硬实时系统的标准。下面的几节仅仅讨论官方内核接口和主流内核行为。幸运的是，大多数实时修改都利用POSIX接口，因此，接下来的讨论也适用于修改版系统。
+
+\subsection{Linux调度策略和优先级}
+
+  linux对进程的调度行为依赖于进程的调度策略，也称之为调度类别。Linux提供了两类实时调度策略作为正常默认策略的补充。头文件<sched.h>中的预定义宏表示各个策略:分别为SCHED\_FIFO, SCHED\_RR和SCHED\_OTHER。
+
+  每一个进程都有一个与nice值无关的静态优先级，对于普通程序，值为0；对于实时程序，它为1到99。Linux调度器始终选择最高优先级的进程运行(静态优先级数值最大的进程)。如果一个优先级为50的进程在运行，此时一个优先级为51的进程就绪，调度器会直接抢占当前进程，转而运行新到的高优先级进程。相反，如果一个优先级为49的进程就绪，它会一直等待直到优先级为50的进程阻塞才可运行。因为普通进程优先级为0，所以实时进程总会抢占非实时进程开始运行。
+
+\subsubsection{“先进先出”策略}
+
+  先进先出(FIFO)策略是没有时间片的非常简单的实时策略。只要没有高优先级进程就绪，FIFO类型进程就会持续运行，用宏SCHED\_FIFO表示。
+
+  因为缺少时间片，它的操作策略相当简单:
+
+\begin{itemize}
+\item \begin{flushleft}一个就绪的FIFO型进程如果是系统中的最高优先级进程就会一直保持运行。特别的，一旦FIFO类进程就绪，它就会直接抢占普通进程。\end{flushleft}
+\item \begin{flushleft}FIFO型进程持续运行直到阻塞或者调用sched\_yield()，或者高优先级进程就绪。\end{flushleft}
+\item \begin{flushleft}当FIFO型进程阻塞时，调度器将其移出就绪队列。当它恢复时，被插到相同优先级进程队列的末尾。因此，它必须等待高优先级或同等优先级进程停止运行。\end{flushleft}
+\item \begin{flushleft}当FIFO型进程调用sched\_yield()时，调度器将其放到同等优先级队列的末尾，因此，它必须等待其他同等优先级进程停止运行。如果没有其他同等优先级进程，sched\_yield()将没有作用。\end{flushleft}
+\item \begin{flushleft}当FIFO型进程被抢占，它在优先级队列中的位置不变。因此，一旦高优先级进程停止运行，被抢占的FIFO型进程就会继续运行。\end{flushleft}
+\item \begin{flushleft}当一个进程变为FIFO型或者进程静态优先级改变，它将会被放到相应优先级队列的头部。因此，新来的FIFO型进程能够抢占同等优先级进程。\end{flushleft}
+\end{itemize}
+
+  本质上，我们可以认为FIFO型进程只要具有最高优先级，就能一直运行。比较有趣的部分在于同等优先级的FIFO进程之间的关系。
+
+\subsubsection{轮转策略}
+
+  轮转策略类似于FIFO类型，仅仅引入了处理同等优先级进程的附加规则，以SCHED\_RR表示。
+
+  调度器给每一个RR型进程分配一个时间片。当RR型进程耗光时间片时，调度器将其放到所在优先级队列的末尾；通过这种方式，RR型进程间就能轮转调度。如果只有一个进程在给定优先级上，RR型就等同于FIFO型，这种情况下，它耗尽时间片，然后直接继续运行。
+
+  我们可以认为RR型进程等同于FIFO型进程，仅仅是在时间片耗尽的时候停止运行，排到同等优先级队列的末尾。
+
+  选择SCHED\_FIFO或者SCHED\_RR仅仅取决于优先级内部的操作，RR型的时间片仅在相同优先级的进程间相关。FIFO进程会不停运行，RR型进程会在给定优先级进程间调度，但是都不会出现高优先级进程等待低优先级进程的情况。
+
+\subsubsection{普通调度策略}
+
+  SCHED\_OTHER代表标准调度策略，适用于默认的非实时进程。所有这些进程的静态优先级都为0，因此，任意就绪FIFO或RR型进程都会抢占他们。
+
+  调度器利用先前讨论过的nice值来划分普通进程的优先级，静态优先级不受nice值的影响，始终为0。
+
+\subsubsection{批调度策略}
+
+  SCHED\_BATCH是批调度或空闲调度的策略，它在某种程度上是实时调度的对立面:这种类型的进程只在系统中没有其他就绪进程时才会运行，即使那些进程已经耗光时间片。这不同于低优先级进程，在那种情况下，进程最终会在高优先级进程耗光时间片后开始运行。
+
+\subsubsection{设置Linux调度策略}
+
+  进程可以通过sched\_getscheduler()和sched\_setscheduler()来操作Linux调度策略:
+
+\begin{lstlisting}
+  #include <sched.h>
+  struct sched_param {
+    /* ... */
+    int sched_priority;
+    /* ... */
+  };
+  int sched_getscheduler (pid_t pid);
+  int sched_setscheduler (pid_t pid, int policy, const struct sched_param *sp);
+\end{lstlisting}
+
+  对sched\_getscheduler()的成功调用将返回由pid指定进程的调度策略，如果pid为0，则返回调用进程的调度策略。<sched.h>中定义了一个整数表示调度策略:SCHED\_FIFO表示先进先出策略，SCHED\_RR表示轮转策略，SCHED\_OTHER表示普通进程。遇到错误，函数返回-1(-1不是有效的调度策略)，同时适当地设置错误号。
+
+  用法很简单:
+
+\begin{lstlisting}
+  int policy;
+  /* get out scheduling policy */
+  policy = sched_getscheduler (0);
+  switch (policy) {
+    case SCHED_OTHER:
+      printf ("Policy is normal\n");
+      break;
+    case SCHED_RR:
+      printf ("Policy is round-robin\n");
+      break;
+    case SCHED_FIFO:
+      printf ("Policy is fist-in, first-out\n");
+      break;
+    case -1:
+      perror ("sched_getscheduler");
+      break;
+    default:
+      fprintf (stderr, "Unknown policy!\n");
+  }
+\end{lstlisting}
+
+  调用sched\_setscheduler()将设置由pid指定进程的调度策略，与策略有关的其他参数则由sp确定。当pid是0时，进程将设置自己的策略和参数。函数成功返回0，失败返回-1并设置错误号。
+
+  sched\_param结构体中的有效字段依赖于操作系统支持的调度策略。SCHED\_RR和SCHED\_FIFO都至少需要一个字段sched\_priority来指明静态优先级。SCHED\_OTHER不使用任何字段，虽然未来的调度策略可能会用到。因此，可移植和合法的程序不应该对结构的布局作出任何假设。
+
+  设置进程调度策略和参数很简单:
+
+\begin{lstlisting}
+  struct sched_param sp = { .sched_priority = 1 };
+  int ret;
+  ret = sched_setscheduler (0, SCHED_RR, &sp);
+  if (ret == -1) {
+    perror ("sched_setscheduler");
+    return 1;
+  }
+\end{lstlisting}
+
+  代码设置调用进程采用轮转调度策略，优先级为1。我们假设1是有效优先级值---技术上讲，并不必要。我们会在下一节讨论如何得到有效优先级取值范围。
+
+  设置除SCHED\_OTHER外的调度策略都需要CAP\_SYS\_NICE能力，因此，通常由root用户运行实时进程。从2.6.12内核开始，RLIMIT\_RTPRIO资源限制允许非root用户在一定上限内设置实时优先级。
+
+  错误码。错误时设置四种错误值:
+
+\begin{eqlist*}
+\item[EFAULT] 指针sp指向的内存区域非法或不可访问。
+\item[EINVAL] policy指定的调度策略无效，或者sp值不适用于给定的策略(仅实用于sched\_setscheduler())。
+\item[EPERM] 调用进程不具备必要的能力。
+\item[ESRCH] pid指定的进程不在运行状态。
+\end{eqlist*}
+
+\subsection{设置调度参数}
+
+  POSIX定义的sched\_getparam()和sched\_setparam()接口可以获取和设置已有调度策略的相关参数:
+
+\begin{lstlisting}
+  #include <sched.h>
+  struct sched_param {
+    /* ... */
+    int sched_priority;
+    /* ... */
+  };
+  int sched_getparam (pid_t pid, struct sched_param *sp);
+  int sched_setparam (pid_t pid, const struct sched_param *sp);
+\end{lstlisting}
+
+  sched\_getscheduler()接口仅仅返回调度策略，sched\_getparam()则将pid进程的调度参数存储在sp中:
+
+\begin{lstlisting}
+  struct sched_param sp;
+  int ret;
+  ret = sched_getparam (0, &sp);
+  if (ret == -1) {
+    perror ("sched_getparam");
+    return 1;
+  }
+  printf ("Our priority is %d\n", sp.sched_priority);
+\end{lstlisting}
+
+  pid为0，返回调用进程的参数。成功返回0，错误返回-1，设置错误号。
+
+  因为sched\_setscheduler()也能设置任何调度参数，所以sched\_setparam()仅仅用来稍后修改参数:
+
+\begin{lstlisting}
+  struct sched_param sp;
+  int ret;
+  sp.sched_priority = 1;
+  ret = sched_setparam (0, &sp);
+  if (ret == -1) {
+    perror ("sched_setparam");
+    return 1;
+  }
+\end{lstlisting}
+
+  函数成功则根据sp设置pid指定进程的调度参数，返回0。失败，返回-1，设置errno。
+
+  如果我们顺序运行上文两段代码，应该会看到这样的输出:
+
+\begin{verbatim}
+  Our priority is 1
+\end{verbatim}
+
+  这个例子再一次假设1是合法值，此时它确实是，但可移植的程序应该主动去确定这一点。稍后我们会看看如何检测有效优先级的范围。
+
+\subsubsection{错误码}
+
+  函数可能设置四种错误码:
+
+\begin{eqlist*}
+\item[EFAULT] 指针sp指向的内存区域非法或不可访问。
+\item[EINVAL] sp值不适用于给定的策略(仅实用于sched\_getparam())。
+\item[EPERM] 调用进程不具备必要的能力。
+\item[ESRCH] pid指定的进程不在运行状态。
+\end{eqlist*}
+
+\subsubsection{确定有效优先级的范围}
+
+  在上边的例子中，我们把优先级数值硬编码到函数调用中。POSIX并不能保证系统上确定的调度优先级可用，仅仅要求至少有32阶优先级。在“Linux调度策略和优先级”一节中我们曾提到Linux为两类实时调度策略提供了1到99阶共99级。一个清晰可移植的程序通常实现自己的优先级范围，然后映射到操作系统的范围上。比如，你需要四个不同的实时优先级层次，你可以动态地确定优先级范围再从中选择四个。
+
+  Linux提供两个系统调用来获得优先级范围，一个返回最小值，另一个返回最大值:
+
+\begin{lstlisting}
+  #include <sched.h>
+  int sched_get_priority_min (int policy);
+  int sched_get_priority_max (int policy);
+\end{lstlisting}
+
+  一旦成功执行，sched\_get\_priority\_min()返回最小值，sched\_get\_priority\_max()返回policy所关联策略的最大有效优先级。两个函数调用成功都返回0(此处为原文错误，正常应该返回对应的值)，调用失败返回-1, 唯一可能的错误是policy值非法，此时错误号被设置为 EINVAL。
+
+  用法很简单:
+
+\begin{lstlisting}
+  int min, max;
+  min = sched_get_priority_min (SCHED_RR);
+  if (min == -1) {
+    perror ("sched_get_priority_min");
+    return 1;
+  }
+  max = sched_get_priority_max (SCHED_RR);
+  if (max == -1) {
+    perror ("sched_get_priority_max");
+    return 1;
+  }
+  printf ("SCHED_RR priority range is %d - %d\n", min, max);
+\end{lstlisting}
+
+  在标准Linux系统上，代码运行得到:
+
+\begin{verbatim}
+  SCHED_RR priority range is 1 - 99
+\end{verbatim}
+
+  此前讨论过，数值越大就意味着越高的优先级。下边的代码可以设置进程的相应策略的最高优先级:
+
+\begin{lstlisting}
+  /*
+  * set_highest_priority – set the associated pid's scheduling
+  * priority to the highest value allowed by its current
+  * scheduling policy. If pid is zero, sets the current
+  * process's priority.
+  *
+  * Returns zero on success.
+  */
+  int set_highest_priority (pid_t pid)
+  {
+    struct sched_param sp;
+    int policy, max, ret;
+    policy = sched_getscheduler (pid);
+    if (policy == -1)
+      return -1;
+    max = sched_get_priority_max (policy);
+    if (max == -1)
+      return -1;
+    memset (&sp, 0, sizeof (struct sched_param));
+    sp.sched_priority = max;
+    ret = sched_setparam (pid, &sp);
+    return ret;
+  }
+\end{lstlisting}
+
+  程序一般都是获得系统的最小或最大值，然后按1递增(比如max-1, max-2等等)，分配给指定的进程。
+
+\subsection{sched\_rr\_get\_interval()}
+
+  前边说过，SCHED\_RR进程除了拥有时间片外和SCHED\_FIFO进程相同。当SCHED\_RR进程耗光时间片的时候，调度器将其放到同一优先级队列的末尾。通过这种方式，所有相同优先级的SCHED\_RR进程循环运行。无论运行进程是否还有时间片，高优先级进程(包括同等或较高优先级的SCHED\_FIFO进程)总是会抢占它。
+
+  POSIX定义了获得进程时间片长度的接口:
+
+\begin{lstlisting}
+  #include <sched.h>
+  struct timespec {
+    time_t tv_sec;    /* seconds */
+    long   tv_nsec;   /* nanoseconds */
+  };
+  int sched_rr_get_interval (pid_t pid, struct timespec *tp);
+\end{lstlisting}
+
+  sched\_rr\_get\_interval()这个糟糕命名的函数，对它的成功调用将把pid指定进程的时间片存储在tp指向的timespec结构中，然后返回0；失败，函数返回-1，设置errno。
+
+  POSIX规定这个函数只能工作于SCHED\_RR进程，然而在Linux上它可以获得任意进程的时间片长度。可移植应用必须假定函数仅能工作于轮转策略，面向Linux的程序可以作一些必要的拓展。例子如下:
+
+\begin{lstlisting}
+  struct timespec tp;
+  int ret;
+  /* get the current task's timeslice length */
+  ret = sched_rr_get_interval (0, &tp);
+  if (ret == -1) {
+    perror ("sched_rr_get_interval");
+    return 1;
+  }
+  /* convert the seconds and nanoseconds to milliseconds */
+  printf ("Our time quantum is %.2lf milliseconds\n",
+  (tp.tv_sec * 1000.0f) + (tp.tv_nsec / 1000000.0f));
+\end{lstlisting}
+
+  如果进程是FIFO类型，则tv\_sec和tv\_nsec都是0，意味着无限长的时间片。
+
+\subsubsection{错误码}
+
+  共有三种可能的错误码:
+
+\begin{eqlist*}
+\item[EFAULT] 指针tp指向的内存无效或者不可访问。
+\item[EINVAL] pid无效(比如pid是负值)。
+\item[ESRCH] pid有效，但指向不存在的进程。
+\end{eqlist*}
+
+\subsection{关于实时进程的一些提醒}
+
+  因为实时进程的本质，开发者在开发和调试此类程序的时候应该特别慎重。如果一个实时程序仓促行事，系统可能失去响应。只要没有高优先级程序，实时程序中任何处理器约束的循环---或者是任何不会阻塞的代码---都会永远地运行下去。
+
+  因此，设计实时程序需要小心和注意，这些有很高权限的程序很容易就使系统崩溃。下面是一些技巧和提醒:
+
+\begin{itemize}
+\item 切记任何处理器约束的循环，如果没有中断或者高优先级进程来打断它，在完成前都会一直运行。如果是无限循环，系统将失去响应。
+\item 因为实时进程运行会占有系统的所有资源，所以在设计的时候需要特别注意，不要过度损害系统其他部分的处理器时间。
+\item 小心忙等待。如果一个实时进程忙等待一个较低优先级进程占有的资源，该进程会永远处于忙等待状态。
+\item 当开发实时程序的时候，永远开着一个终端，运行一个更高优先级的进程。在紧急情况下，终端会保持响应，允许你杀死失控的进程。(当终端空闲等待输入的时候，不会影响其他实时进程。)
+\item util-linux工具包中的chrt实用程序可以使获取和设置实时进程属性更轻松。它可以简单地让任意程序运行在实时调度策略下，比如前述的终端，或者改变已有应用的实时优先级。
+\end{itemize}
+
+\subsection{确定性}
+
+  实时进程乐于看到确定性。在实时计算中，如果给予相同的输入，一个动作总是在相同的时间内产生相同的结果，我们就说这个动作是确定的。现代计算机可以说是不确定的集合体:多级缓存(命中与否不可预测)，多处理器，分页，交换，和多任务都使估计一个动作需要多长时间变得不可能。显然我们现在每一个动作(相对于硬盘访问)都是“不可思议的快”，但是同时现代系统也使得我们难于精确测量每一个动作的时间。
+
+  实时应用一般会尽量限制不可预测性，和最坏情况下的延时。下面的章节讨论达到目标的两种方法。
+
+\subsubsection{数据故障预测和内存锁定}
+
+  想象一下:ICBM(译者注：洲际导弹系统)监视器接入产生硬件中断，设备驱动迅速地拷贝硬件数据到内核。驱动会注意到一个进程因等待数据阻塞在硬件设备上，因此会通知内核唤醒进程。内核注意到该进程是实时进程且拥有高优先级，就会直接抢占当前运行进程，将注意力转移过来，决定直接调度实时进程。调度器转换到运行实时进程，上下文切换到相应的地址空间。进程开始运行，整个过程需要0.3ms，在1ms的容忍限度内。
+
+  现在考虑用户空间，实时进程注意到接入的ICBM，开始处理轨道。计算好弹道后，实时进程开始配置反导系统。仅仅花掉0.1ms，足够ABM响应和拯救生命。但是---不---ABM的代码已经被交换到硬盘上。于是发生页错误，处理器切回内核模式，启动硬盘I/O来获得交换出去的数据。实时进程会一直休眠直到处理完页错误，几秒钟过去了，一切太晚了。
+
+  显然，分页和交换给实时进程带来了很多不确定性。为了阻止这种灾难，实时应用往往“通过锁定”或者“硬连接“来将地址空间中的页提前放入物理内存，阻止其被交换出去。一旦页被锁定，内核就不会将其交换出去，任何访问都不会引起页错误，大多数实时应用都锁定部分和全部页面到物理内存。
+
+  Linux为两种方法都提供了接口。Chapter 4讨论了故障预测的接口，Chapter 8将讨论锁定内存的接口。
+
+\subsubsection{CPU亲和度和实时进程}
+
+  实时应用的第二个难点在于多任务。虽然Linux内核是抢占式的，但是调度器并不总能直接调度另一个进程。有时，当前进程运行在内核中的临界区，调度器就必须等待它退出临界区，如果此时有一个实时进程要运行，延时将不可接受，很快就会超出操作期限。
+
+  因此，多任务和分页一样也带来了相似的不确定。对于多任务的解决方案也一样:消除它。当然，前提是你不能简单地消灭其他所有进程，如果你可以，你就不需要Linux了---简单定制的操作系统就能满足要求。如果你的系统中有多个处理器，可以指定一个或多个专门用于实时进程。从实际效果上讲，你把实时进程和多任务分离开来。
+
+  本章已经讨论过操作进程CPU亲和度的系统调用。一个潜在的对实时进程的优化是为每一个实时进程保留一个处理器，剩下的处理器由其他进程共享。
+
+  最简单的方法是修改Linux的init程序，SysVinit\footnote[1]{SysVinit源代码可以在ftp://ftp.cistron.nl/pub/people/miquels/sysvinit/取得，以GNU General Public License v2授权},从而可以在启动前做类似下面的动作:
+
+\begin{lstlisting}
+  cpu_set_t set;
+  int ret;
+  CPU_ZERO (&set); /* clear all CPUs */
+  ret = sched_getaffinity (0, sizeof (cpu_set_t), &set);
+  if (ret == -1) {
+    perror ("sched_getaffinity");
+    return 1;
+  }
+  CPU_CLR (1, &set); /* forbid CPU #1 */
+  ret = sched_setaffinity (0, sizeof (cpu_set_t), &set);
+  if (ret == -1) {
+    perror ("sched_setaffinity");
+    return 1;
+  }
+\end{lstlisting}
+
+  代码首先得到初始的可用处理器集合，我们期望是全体处理器。然后移出一个处理器CPU \#1，更新可用处理器集合。
+
+  因为可用处理器集合在父子进程间继承，init又是所有进程的祖先，所以所有的进程都会根据修改后的处理器集合运行，CPU \#1上将没有任何进程。
+
+  接下来，修改实时程序让它仅在CPU \#1上运行:
+
+\begin{lstlisting}
+  cpu_set_t set;
+  int ret;
+  CPU_ZERO (&set); /* clear all CPUs */
+  CPU_SET (1, &set); /* allow CPU #1 */
+  ret = sched_setaffinity (0, sizeof (cpu_set_t), &set);
+  if (ret == -1) {
+    perror ("sched_setaffinity");
+    return 1;
+  }
+\end{lstlisting}
+
+  如此，结果就是实时进程仅运行在CPU \#1上，其他的所有进程分享其他处理器。
+
+\section{资源限制}
+
+  Linux内核有对进程的资源限制，明确规定了进程可以消耗的内核资源的上限，比如打开文件的数目，内存页数，未处理的信号等等。限制是强制性的，内核不会允许进程的超过这一硬性限制。比如，如果一个打开文件的操作会使得进程拥有的文件超出资源限制，open()调用会失败\footnote[2]{此时，调用会设置错误号为EMFILE，表明进程达到文件数量上限。Chapter 2讨论了open()系统调用}。
+
+  Linux提供了两个操作资源限制的系统调用。两个都是POSIX的标准调用，Linux做了一些补充，分别用getlimit()和setlimit()获取和设置限制:
+
+\begin{lstlisting}
+  #include <sys/time.h>
+  #include <sys/resource.h>
+  struct rlimit {
+    rlim_t rlim_cur; /* soft limit */
+    rlim_t rlim_max; /* hard limit */
+  };
+  int getrlimit (int resource, struct rlimit *rlim);
+  int setrlimit (int resource, const struct rlimit *rlim);
+\end{lstlisting}
+
+  一般用类似RLIMIT\_CPU的整数常量表示资源，rlimit结构表示实际限制。结构定义了两个上限:软限制和硬限制。内核对进程强制施行软限制，但进程自身可以修改软限制，可以是0到硬限制之间的任意值。不具备CAP\_SYS\_RESOURCE能力的进程(比如，非root进程)，只能调低硬限制。非特权程序不能提升硬限制，包括恢复为之前的较高的值；因此，调低硬限制是不可逆的。特权进程则可以设置硬限制为任意合法值。
+
+  限制的含义与资源相关。比如资源是RLIMIT\_FSIZE，就表示一个进程可以创建的最大文件长度，单位是字节。此时如果rlim\_cur是1024，则进程不可以创建大于1K的文件，也不能扩展文件至1k以上。
+
+  所有的资源限制都有两个特殊值: 0和无限。前者表示禁止使用资源，例如RLIMIT\_CORE是0，则内核不会创建内存转储文件。相反，后者表示不存在对资源的限制。内核用特殊值RLIM\_INFINITY表示无限，碰巧是-1，(可能和函数调用错误返回-1相混淆)。如果RLIMIT\_CORE是无限，则内核可以创建任意大小的内存转储文件。
+
+  函数getrlimit()会在指针rlim指向的结构中放入resource的软硬限制。成功，返回0；错误，返回-1，设置错误号。
+
+  相对的，函数setrlimit()按rlim指定的值设置resource的软硬限制。成功，返回0，内核更新对应的资源限制；失败，返回-1，设置错误号。
+
+\subsection{限制列表}
+
+  目前Linux提供了15种资源限制:
+
+
+\begin{itemize}{}
+\item RLIMIT\_AS\\
+  进程地址空间上限，单位是字节。试图增加地址空间大小超过限制---比如调用mmap()和brk()函数---都会失败，返回ENOMEM。如果进程的栈自动增加，超过了限制，内核将给进程SIGSEGV信号。该限制的值通常为RLIM\_INFINITY。
+\item RLIMIT\_CORE\\
+  内存转储文件大小的最大值，单位是字节。如果非0，超出限制的内存转储文件将截短为最大限制大小；如果是0，将不会产生此类文件。
+\item RLIMIT\_CPU\\
+  一个进程可以使用的最长CPU时间，单位是秒。如果进程运行时间超出限制，将接受和处理内核发出的SIGXCPU信号。一个可移植程序必须在接收到该信号时中断，当POSIX没有定义内核的下一步动作。一些系统会中断进程，然而Linux允许进程继续运行，并且每秒发送给该进程一个SIGXCPU信号。一旦进程达到硬限制，将会收到SIGKILL信号并被中断。
+\item RLIMIT\_DATA\\
+  进程数据段和堆的大小，单位是字节。试图通过brk()来扩大数据段以超出限制将失败并返回ENOMEM。
+\item RLIMIT\_FSIZE\\
+  文件可以创建的最大文件，单位是字节。如果进程扩展文件超出了限制，内核将发送SIGXFSZ信号。默认情况下，信号将终止进程。但是，进程也可以在系统调用失败返回EFBIG时选择自己捕捉和处理信号。
+\item RLIMIT\_LOCKS\\
+  进程可以拥有的文件锁的最大数量(参见第七章关于文件锁的讨论)。一旦达到最大值，任何试图获取额外锁的努力都会失败，返回ENOLCK。Linux 2.4.25内核移除了这一功能，在当前内核中，可以设定这一限制，但不会起任何作用。
+\item RLIMIT\_MEMLOCK\\
+  不具有CAP\_SYS\_IPC能力的进程(非root进程)通过mlock()，mlockall()或者shmctl()能锁定的最多内存的字节数。当超过限制的时候，调用失败范围EPERM。实际上，实际限制向下舍入到整数个内存页。拥有CAP\_SYS\_IPC能力的进程可以锁定任意数量的内存页，此限制不再有效。在2.6.9内核前，该限制作由于有CAP\_SYS\_IPC能力的进程，非特权进程根本不能锁定内存页。此限制不属于POSIX标准，BSD首先引入了它。
+\item RLIMIT\_MSGQUEUE\\
+  用户可以在POSIX消息队列中分配的最多字节。如果新建的消息超出限制，mp\_open()函数失败返回ENOMEM。它不属于POSIX标准，于2.6.8内核中引入并为Linux独有。
+\item RLIMIT\_NICE\\
+  进程可以降底nice值(提升优先级)的最大值。本章前文已说明，普通进程只能提高友好度(降低优先级)。这个限制允许管理员规定进程可以合法地提升优先级的级数。因为nice值可能是负值，内核用$20-rlim\_cur$表示。因此，如果限制设置为40，进程友好度最低为-20(最高优先级)。2.6.12内核引入了这个限制。
+\item RLIMIT\_NOFILE\\
+  该值比进程可以打开的最多文件数大一。任何超出限制的企图都会失败返回EMFILE。在BSD中此限制名字为RLIMIT\_OFILE。
+\item RLIMIT\_NPROC\\
+  系统任意时刻允许的最多进程数。任何超出限制的企图都会失败，fork()返回EAGAIN。此限制不属于POSIX，由BSD引入。
+\item RLIMIT\_RSS\\
+  进程可以驻留在内存中的最多页数(即驻留集大小RSS)。仅在早期的2.4内核中强制执行；当前内核允许设置，但不强制执行。此限制不属于POSIX，由BSD引入。
+\item RLIMIT\_RTPRIO\\
+  没有CAP\_SYS\_NICE能力的进程可以拥有的最大实时优先级。通常，非特权进程不会要求实时调度。此限制不属于POSIX，由2.6.12内核引入并为Linux独有。
+\item RLIMIT\_SIGPENDING\\
+  用户消息队列中最多信号数。请求更多的信号将失败，sigqueue()这样的系统调用将返回EAGAIN。注意，可以无视这个限制而将一个尚未排入队列的信号实例加入该队列. 因此，总是可以向进程传递SIGKILL和SIGTERM信号。此限制不属于POSIX，由Linux独有。
+\item RLIMIT\_STACK\\
+  栈的最大字节长度。超出限制将收到SIGSEGV信号。
+\end{itemize}
+
+% 根据第一版的勘误，该段被全部替换。
+%内核以用户为存储资源限制的基本单位，也就是说，相同用户的所有进程都会有相同的软硬资源限制，但是资源限制本身却描述了对单一进程的限制。比如，内核为每个用户都维护一个RLIMIT\_NOFILE，默认是1024，这个限制规定了每个进程能打开的最多文件数，而不是该用户总共能打开的文件数。还需要注意的是，这并不意味着限制能针对进程分别设置---一旦进程修改了RLIMIT\_NOFILE软限制，此用户的所有进程都会受到这种限制。
+
+% 第二版中的该段翻译如下
+内核中以进程为单位管理资源限制。子进程在fork的时候从父进程继承资源限制，限制通过exec进行维护。
+
+\subsubsection{默认限制}
+
+  默认限制取决于三个变量:初始软限制，初始硬限制和系统管理员。内核说明了初始软限制和初始硬限制，如表。内核在init进程中设置这些限制，并通过父子进程间的继承传递给所有的子孙进程。
+\begin{center}
+\begin{tabular}{ccc}
+  \toprule [1pt]
+  \rowcolor[gray]{.9}
+    Resource limit & Soft limit & Hard limit\\
+  \midrule
+    RLIMIT\_AS & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_CORE & 0 & RLIM\_INFINITY\\
+    RLIMIT\_CPU & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_DATA & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_FSIZE & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_LOCKS & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_MEMLOCK & 8 pages & 8 pages\\
+    RLIMIT\_MSGQUEUE & 800 KB & 800KB\\
+    RLIMIT\_NICE & 0 & 0\\
+    RLIMIT\_NOFILE & 1024 & 1024\\
+    RLIMIT\_NPROC & 0 (implies no limit) & 0 (implies no limit)\\
+    RLIMIT\_RSS & RLIM\_INFINITY & RLIM\_INFINITY\\
+    RLIMIT\_RTPRIO & 0 & 0\\
+    RLIMIT\_SIGPENDING & 0 & 0\\
+    RLIMIT\_STACK & 8 MB & RLIM\_INFINITY\\
+  \bottomrule[1pt]
+\end{tabular}
+\end{center}
+
+  两种情况可以改变默认限制:
+
+\begin{itemize}
+\item 任何进程都可以在0到硬限制的范围内增加软限制，也可以减少硬限制，子进程可以通过fork来继承这些改变。
+\item 特权进程可以任意设置硬限制，子进程同样可以通过fork来继承这些改变。
+\end{itemize}
+
+  普通进程继承体系中的root进程不太可能修改任何硬限制，因此，第一点更有可能是限制变化的原因。实际上，对于进程的限制往往由用户通过shell设定，系统管理员可以进行设置来提供种类繁多的限制。比如在Bourne-again shell(bash)中，管理员可以使用ulimit命令来设置。注意管理员不仅可以降低限制值，还可以提升软限制到硬限制，从而给用户提供更合理的限制。一般会使用RLIMIT\_STACK(在许多系统上该值都被设置为RLIM\_INFINITY)进行处理。
+
+\subsection{获取和设置资源限制}
+
+  解释了种种资源限制，让我们来考察一下获取和设置这些限制。获取限制很简单:
+
+\begin{lstlisting}
+  struct rlimit rlim;
+  int ret;
+  /* get the limit on core sizes */
+  ret = getrlimit (RLIMIT_CORE, &rlim);
+  if (ret == -1) {
+    perror ("getrlimit");
+    return 1;
+  }
+  printf ("RLIMIT_CORE limits: soft=%ld hard=%ld\n",
+  rlim.rlim_cur, rlim.rlim_max);
+\end{lstlisting}
+
+  编译然后运行代码将得到:
+
+\begin{verbatim}
+  RLIMIT_CORE limits: soft=0 hard=-1
+\end{verbatim}
+
+  可以看到，软限制为0，硬限制为-1(-1代表无限)。因此我们可以设置软连接为任意值。下面的例子设置内存转储文件最大为32MB:
+\begin{lstlisting}
+  struct rlimit rlim;
+  int ret;
+  rlim.rlim_cur = 32 * 1024 * 1024; /* 32 MB */
+  rlim.rlim_max = RLIM_INFINITY; /* leave it alone */
+  ret = setrlimit (RLIMIT_CORE, &rlim);
+  if (ret == -1) {
+    perror ("setrlimit");
+    return 1;
+  }
+\end{lstlisting}
+
+\subsubsection{错误码}
+
+  可能有三种错误代码:
+
+\begin{eqlist*}
+\item[EFAULT] rlim指向的内存非法或不可访问。
+\item[EINVAL] resource的值非法，或者rlim.rlim\_cur的值大于rlim.rlim\_max(仅适用于setrlimit())。
+\item[EPERM] 调用者没有CAP\_SYS\_RESOURCE能力却试图提升硬限制。
+\end{eqlist*}

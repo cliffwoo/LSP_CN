@@ -1,0 +1,2 @@
+\XeTeXinputencoding "gbk"
+ 

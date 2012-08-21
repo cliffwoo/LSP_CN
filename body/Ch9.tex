@@ -1,0 +1,861 @@
+\ifx\atempxetex\usewhat
+\XeTeXinputencoding "utf-8"
+\fi
+\defaultfont
+
+\chapter{信号}
+
+信号是提供处理异步事件机制的软件中断。这些事件可以来自系统外部——例如用户产生中断符（通常是Ctrl-C）——或者来自程序或内核内部的活动，例如进程执行除以零的代码。作为一种进程间通信（IPC）的基本形式，进程也可以给另一个进程发送信号。
+
+关键问题不仅仅是事件的发生是异步的（例如用户可以在程序执行的任何时候按下Ctrl-C）而且程序对信号的处理也是异步的。信号处理函数在内核注册，收到信号时，内核从程序的其它部分异步地调用信号处理函数。
+
+信号很早就是Unix的一部分。随着时间的推移，信号有了很大的改进。比如在可靠性方面，之前的信号可能会出现丢失的情况；在功能方面，现在信号可以携带用户定义的附加信息。最初，不同的Unix系统对信号做了不同的改变。值得庆幸的是，POSIX标准的到来挽救并且标准化了信号处理。这个标准正是Linux提供的，并且也是我们这里将要讨论的。
+
+在本章中，我们从信号概述开始，并且讨论它们的使用和误用。接下来我们会讨论各种Linux管理和操作信号的接口。
+
+大多数杰出的应用程序都与信号有关。即使你故意设计不依赖信号来进行通讯的应用程序（这通常是一个好主意），在某些特殊的情况下你仍然会被迫使用信号，例如处理程序终止。
+
+\section{信号概念}
+
+信号有一个非常明确的生命周期。首先，产生信号（我们有时也说信号被发出或生成）。然后内核存储信号直到可以发送它。最后，一旦有空闲，内核会适当的处理信号。内核根据进程的请求可以执行以下三个过程之一： 
+
+\begin{eqlist*}
+\item[忽略信号] 不采取任何操作。但是有两种信号不能被忽略：SIGKILL和SIGSTOP。这样做的原因是系统管理员需要能够杀死或停止进程，如果进程能够选择忽略SIGKILL（使进程不能被杀死）或SIGSTOP（使进程不能被停止）将破坏这一权力。
+\item[捕获并处理信号] 内核会暂停该进程正在执行的代码，并跳转到先前注册过的函数。接下来进程会执行这个函数。一旦进程从该函数返回，它会跳回到捕获信号的地方继续执行。
+
+SIGINT和SIGTERM是两个常见的可捕获的信号。进程捕获SIGINT来处理用户产生的中断符——例如终端能捕获该信号并返回到主提示符。进程捕获SIGTERM以便在结束前执行必要的清理工作，例如断开网络，或删除临时文件。SIGKILL和SIGSTOP不能被捕获。
+\item[执行默认操作] 该操作作取决于被发送的信号。默认操作通常是终止进程。例如对SIGKILL来说就是这样。然而，许多信号是为程序员在特定情况下的特殊目的而提供的，这些信号在默认的情况下是被忽略的，因为许多程序对它们并不感兴趣。我们会简要介绍各种信号和它们的默认操作。
+\end{eqlist*}
+
+过去，当一个信号被发送后，除了知道发生了一个信号之外，处理信号的函数对于发生了什么一无所知。现在，内核能给接收信号的程序员提供大量的上下文，甚至信号能传递用户定义的数据，就像后来更高级的IPC机制一样。
+
+\subsection{信号标识符}
+
+每个信号都有一个以SIG为前缀的符号名称。例如SIGINT是用户按下Ctrl-C时发出的信号，SIGABRT是进程调用abort()函数时产生的信号，SIGKILL是进程被强制终止时产生的信号。
+
+这些信号都是在<signal.h>头文件中定义的。信号被预处理程序简单的定义为正整数，也就是说，每个信号都与一个整数标识符相关联。信号从名称到整数的映射是依赖于具体实现的，并且不同的Unix系统中也不同，但最开始的十二个左右的信号通常是以同样的方式映射的（例如SIGKILL是信号9）。一个好的程序员应该总是使用信号的可读的名称，而不要使用它的整数值。
+
+信号的编号从1开始（通常是SIGHUP）线性增加。总共有大约31个信号，但是大多数的程序只用到了它们中的一少部分。没有任何信号的值为0，这是一个特殊的值称为空信号。空信号确实无关紧要，不值得为它起一个特别的名字，但是一些系统调用（例如kill()）在特殊的情况下使用0这个值。
+
+你可以使用kill-l命令产生一个系统支持的信号的列表。
+
+\subsection{Linux支持的信号}
+
+表9-1列出了Linux支持的信号。
+
+表9-1 信号
+
+\begin{center}
+\begin{tabular}{p{2.2cm}p{7cm}p{4cm}}\toprule
+\rowcolor[gray]{.9}
+\textbf{信号} & \textbf{说明} & \textbf{默认操作}\\ \midrule
+\textbf{SIGABRT} & 由abort()发送 & 终止且进行内存转储\\
+\textbf{SIGALRM} & 由alarm()发送 & 终止\\
+\textbf{SIGBUS} & 硬件或对齐错误 & 终止且进行内存转储\\
+\textbf{SIGCHLD} & 子进程终止 & 忽略\\
+\textbf{SIGCONT} & 进程停止后继续执行 & 忽略\\
+\textbf{SIGFPE} & 算术异常 & 终止且进行内存转储\\
+\textbf{SIGHUP} & 进程的控制终端关闭（最常见的是用户登出） & 终止\\
+\textbf{SIGILL} & 进程试图执行非法指令 & 终止且进行内存转储\\
+\textbf{SIGINT} & 用户产生中断符（Ctrl-C） & 终止\\
+\textbf{SIGIO} & 异步IO事件（Ctrl-C） & 终止(a)\\
+\textbf{SIGKILL} & 不能被捕获的进程终止信号 & 终止\\
+\textbf{SIGPIPE} & 向无读取进程的管道写入 & 终止\\
+\textbf{SIGPROF} & 向无读取进程的管道写入 & 终止\\
+\textbf{SIGPWR} & 断电 & 终止\\
+\textbf{SIGQUIT} & 用户产生退出符（\verb|Ctrl-\|） & 终止且进行内存转储\\
+\textbf{SIGSEGV} & 无效内存访问 & 终止且进行内存转储\\
+\textbf{SIGSTKFLT} & 协处理器栈错误 & 终止(b)\\
+\textbf{SIGSTOP} & 挂起进程 & 停止\\
+\textbf{SIGSYS} & 进程试图执行无效系统调用 & 终止且进行内存转储\\
+\textbf{SIGTERM} & 可以捕获的进程终止信号 & 终止\\
+\textbf{SIGTRAP} & 进入断点 & 终止且进行内存转储\\
+\textbf{SIGSTP} & 用户生成挂起操作符（Ctrl-Z） & 停止\\
+\textbf{SIGTTIN} & 后台进程从控制终端读 & 停止\\
+\textbf{SIGTTOU} & 后台进程向控制终端写 & 停止\\
+\textbf{SIGURG} & 紧急I/O未处理 & 忽略\\
+\textbf{SIGUSR1} & 进程自定义的信号 & 终止\\
+\textbf{SIGUSR2} & 进程自定义的信号 & 终止\\
+\textbf{SIGVTALRM} & 用ITIMER\_VIRTUAL为参数调用setitimer()时产生 & 终止\\
+\textbf{SIGWINCH} & 控制终端窗口大小改变 & 忽略\\
+\textbf{SIGXCPU} & 进程资源超过限制 & 终止且进行内存转储\\
+\textbf{SIGXFSZ} & 文件资源超过限制 & 终止且进行内存转储\\ \bottomrule
+\end{tabular}
+\end{center}
+
+a 其它的Unix系统（例如BSD）忽略这个信号。
+
+b Linux内核不再产生这个信号；它只是为了向后兼容。
+
+其它的几个信号值存在，但是Linux将它们定义为其它信号：SIGINFO被定义成了SIGPWR\footnote[1]{只有Alpha结构的机器定义了该信号。所有其它的机器结构中，该信号不存在。}，SIGIOT被定义成了SIGABRT，SIGPOLL和SIGLOST被定义成了SIGIO。
+
+我们有了一个快速参考表，现在让我们一起去了解每个信号的细节：
+
+\begin{eqlist*}
+\item[SIGABRT] abort()函数将该信号发送给调用它的进程。然后该进程终止并产生一个内核转存文件。在Linux中，断言assert()在条件为假的时候调用abort()。
+\item[SIGALRM] alarm()和setitimer()（以ITIMER\_REAL标志调用）函数在报警信号超时时向调用它们的进程发送该信号。第十章将会讨论这些问题以及相关的函数。
+\item[SIGBUS] 当进程发生除了内存保护外的硬件错误时会产生该信号，而内存保护会产生SIGSEGV。在传统的Unix系统中，此信号代表各种无法恢复的错误，例如非对齐的内存访问。然而，Linux内核能自动修复大多数这种错误，而不再产生该信号。当进程以不恰当的方式访问由mmap()（见第八章对内存映射的讨论）创建的内存区域时，内核会产生该信号。内核将会终止进程并进行内存转储，除非该信号被捕获。
+\item[SIGCHLD] 当进程终止或停止时，内核会给进程的父进程发送此信号。在默认的情况下SIGCHLD是被忽略的，如果进程对它们的子进程是否存在感兴趣，那么进程必须显示地捕获并处理该信号。该信号的处理程序通常调用wait()（第五章讨论的内容），来确定子进程的pid和退出代码。
+\item[SIGCONT] 当进程停止后又恢复执行时，内核给进程发送该信号。默认的情况下该信号被忽略，如果想在进程恢复后执行某些操作，则可以捕获该信号。该信号通常被终端或编辑器用来刷新屏幕。
+\item[SIGFPE] 不考虑它的名字，该信号代表所有的算术异常，而不仅仅指浮点数运算相关的异常。异常包括溢出，下溢和除以0。默认的操作是终止进程并形成内存转储文件，但进程可以捕获并处理该信号。请注意，如果进程选择继续运行，则该进程的行为及非法操作的结果是未定义的。
+\item[SIGHUP] 当会话的终端断开时，内核会给会话首进程发送该信号。当会话首进程终止时，内核也会给前台进程组的每个进程发送该信号。默认操作是终止进程，该信号表明用户已经登出。守护进程“过载”该信号，这种机制用来指示守护进程重载它们的配置文件。例如，给Apache发送SIGHUP信号，可以使它重新读取http.conf配置文件。为此目的而使用SIGHUP是一种常见的约定，但并不是强制性的。这种做法是安全的，因为守护进程没有控制终端，因此决不会正常收到该信号。
+\item[SIGILL] 当进程试图执行一条非法机器指令时，内核会发送该信号。默认操作是终止进程并进行内存转储。进程可以选择捕获并处理SIGILL，但是错误发生后的行为是未定义的。
+\item[SIGINT] 当用户输入中断符（通常是Ctrl-C）时，该信号被发送给所有前台进程组中的进程。默认的操作是终止进程；进程可以选择捕获并处理该信号，通常是为了在终止前进行清理工作。
+\item[SIGIO] 当一个BSD风格的I/O事件发生时，该信号被发出。（见第四章对高级I/O技术的讨论，这对Linux来说是很平常的。）
+\item[SIGKILL] 该信号由kill()系统调用发出；它的存在是为了给系统管理员提供一种可靠的方法来无条件终止一个进程。该信号不能被捕获或忽略，它的结果总是终止该进程。
+\item[SIGPIPE] 如果一个进程向管道里写，但读管道的进程已经终止，内核会发送该信号。默认的操作是终止进程，但该信号可以被捕获并处理。
+\item[SIGPROF] 当剖析定时器超时，用ITIMER\_VIRTUAL标志调用setitimer()产生该信号。默认操作是终止进程。
+\item[SIGPWR] 该信号是与系统相关的。在Linux系统中，它代表低电量条件（例如在一个不可中断的电源供应（UPS）中）。UPS监测守护进程发送该信号 init 进程，由 init 进程清理并关闭系统 —— 希望能在断电前完成！
+\item[SIGQUIT] 当用户输入终端退出符（通常是\verb|Ctrl-\|）时，内核会给所有前台进程组的进程发送该信号。默认的操作是终止进程并进行内存转储。
+\item[SIGSEGV] 该信号的名称来源于段错误，当进程试图进行非法内存访问时，内核会发出该信号。这些情况包括访问未映射的内存，从不可读的内存读取，在不可执行的内存中执行代码，或者向不可写入的内存写入。进程可以捕获并处理该信号，但是默认的操作是终止进程并进行内存转储。
+\item[SIGSTOP] 该信号只由kill()发出。它无条件停止一个进程，并且不能被捕获或忽略。
+\item[SIGSYS] 当进程试图调用一个无效的系统调用时，内核向该进程发送该信号。如果一个二进制文件是在一个较新版本的操作系统上编译的（使用较新版本的系统调用），但随后运行在旧版本的操作系统上，就可能发生这种情况。通过glibc进行系统调用并正确编译的二进制文件应该从不会收到该信号。相反，无效的系统调用应该返回-1，并将errno设置为ENOSYS。
+\item[SIGTERM] 该信号只由kill()发送；它允许用户“优雅”的终止进程（默认操作）。进程可以选择捕获该信号，并在进程终止前进行清理，但是捕获该信号并且不及时的终止进程，是拙劣的表现。
+\item[SIGTRAP] 当进程通过一个断点时，内核给进程发送该信号。通常调试器捕获该信号，其它进程忽略该信号。
+\item[SIGTSTP] 当用户输入挂起符（通常是Ctrl-Z）时，内核给所有前台进程组的进程发送该信号。
+\item[SIGTTIN] 当一个后台进程试图从它的控制终端读数据时，该信号会被发送给该进程。默认的操作是停止该进程。
+\item[SIGTTOU] 当一个后台进程试图向它的控制终端写时，该信号会被发送给该进程。默认的操作是停止该进程。
+\item[SIGURG] 当带外（OOB）数据抵达套接字时，内核给进程发送该信号。带外数据超出了本书的讨论范围。
+\item[SIGUSR1 和 SIGUSR2]
+ 这些信号是给用户自定义用的，内核从来不发送它们。进程可以以任何目的使用SIGUSR1和SIGUSR2。通常的用法是指示守护进程进行不同的操作。默认的操作是终止进程。
+\item[SIGVTALRM] 当一个以ITIMER\_VIRTUAL标志创建的定时器超时时，setitimer()函数发送该信号。第十章讨论定时器。
+\item[SIGWINCH] 当终端窗口大小改变时，内核给所有前台进程组的进程发送该信号。默认的情况下，进程忽略该信号，但如果它们关心终端窗口的大小，它们可以选择捕获并处理该信号。捕获该信号的程序中有一个很好的例子top---试着在它运行时改变它的窗口大小，看它是如何响应的。
+\item[SIGXCPU] 当进程超过其软处理器限制时，内核给进程发送该信号。内核会一秒钟一次持续的发送该信号，直到进程退出或超过其硬处理器限制。一旦超过其硬限制，内核会给进程发送SIGKILL信号。
+\item[SIGXFSZ] 当进程超过它的文件大小限制时，内核给进程发送该信号。默认的操作是终止进程，但是如果该信号被捕获或被忽略，文件长度超过限制的系统调用将会返回-1，并将errno设置为EFBIG。
+\end{eqlist*}
+
+\section{基本信号管理}
+
+最简单古老的信号管理接口是signal()函数。该函数由ISO C89标准定义，其中只定义了信号支持的最少的共同特征，该系统调用是非常基本的。Linux通过其他接口提供了更多的信号控制，我们将在本章稍后介绍。因为signal()是最基本的，也由于它是在ISO C中定义的，因此它的使用相当普遍，我们先来讨论它:
+
+\begin{lstlisting}
+#include <signal.h>
+typedef void (*sighandler_t)(int);
+sighandler_t signal (int signo, sighandler_t handler);
+\end{lstlisting}
+
+一次成功的调用signal()会移除接收signo信号的当前操作，并以handler指定的新信号处理程序代替它。signo是前面讨论过的信号名称的一种，例如SIGINT或SIGUSR1。回想一下，进程不能捕获SIGKILL和SIGSTOP，因此给这两个信号设置处理程序是没有意义的。
+
+信号处理函数必须返回void，这是有道理的，因为（不像正常的函数）在程序中没有地方给这个函数返回。该函数需要一个整数参数，这是被处理信号的标识符（例如SIGUSR2）。这使得一个信号处理函数可以处理多个信号。函数原型如下：
+
+\begin{lstlisting}
+void my_handler (int signo);
+\end{lstlisting}
+
+Linux用typedef将该函数原型定义为sighandler\_t。其他的Unix系统直接使用函数指针；一些系统则有它们自己的类型，可能不会以sighandler\_t命名。追求可移植性的程序不要直接使用该类型。
+
+当内核给已经注册过信号处理程序的进程发送信号时，内核会停止程序的正常指令流，并调用信号处理程序。信号的值被传递给信号处理程序，该值就是signo最初提供给signal()的值。
+
+你也可以用signal()指示内核对当前的进程忽略某个指定信号，或重新设置该信号的默认操作。这可以通过使用特殊的参数值来实现：
+
+\begin{eqlist*}
+\item[SIG\_DFL] 将signo所表示的信号设置为默认操作。例如对于SIGPIPE，进程将会终止。
+\item[SIG\_IGN] 忽略signo表示的信号。
+\end{eqlist*}
+
+signal()函数返回该信号先前的操作，这是一个指向信号处理程序，SIG\_DFL或SIG\_IGN的指针。出错时，函数返回SIG\_ERR，并不设置errno。
+
+\subsection{等待信号}
+
+ 出于调试和写演示代码的目的，POSIX定义的pause()系统调用，它可以使进程睡眠，直到进程接收到处理或终止进程的信号：
+
+\begin{lstlisting}
+#include <unistd.h>
+int pause (void);
+\end{lstlisting}
+
+pause()只在接收到可捕获的信号时返回，在这种情况下该信号被处理，pause()返回-1，并将errno设置为EINTR。如果内核发出了一个被忽略的信号，进程不会被唤醒。
+
+在Linux内核中，pause()是最简单的系统调用之一。它只执行两个操作。首先，它将进程置为可中断的睡眠状态。然后它调用schedule()，使Linux进程调度器找到另一个进程来运行。由于进程事实上不等待任何事件，在接收到信号前，内核是不会唤醒它的。实现该调用只需要两行C代码。\footnote[1]{因此，pause()是第二简单的系统调用。并列第一的是getpid()和gettid()，它们只有一行。}
+
+\subsection{例子}
+
+让我们来看看几个简单的例子。第一个例子为SIGINT注册了一个简单的信号处理程序，它只打印一条信息然后终止程序（就像SIGINT一样）：
+
+\begin{lstlisting}
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+/* SIGINT 的处理程序 */
+static void sigint_handler (int signo)
+{
+      /*
+       * 从技术上来说，在信号处理程序中不应该使用printf()，
+       * 但这不是非常严重的问题。
+       * 我会在“重入”这部分讨论为什么可以这样做。
+       */
+      printf ("Caught SIGINT!\n");
+      exit (EXIT_SUCCESS);
+}
+
+int main (void)
+{
+      /*
+       * 注册 sigint_handler 作为 SIGINT 的信号处理程序。
+       */
+      if (signal (SIGINT, sigint_handler) == SIG_ERR) {
+          fprintf (stderr, "Cannot handle SIGINT!\n");
+          exit (EXIT_FAILURE);
+      }
+      for (;;)
+          pause ( );
+      return 0;
+}
+\end{lstlisting}
+
+在接下来的例子中，我们为SIGTERM和SIGINT注册相同的信号处理程序。我们还将SIGPROF重置为默认操作（这会终止进程）并忽略SIGHUP（否则会终止进程）：
+
+\begin{lstlisting}
+#include   <stdlib.h>
+#include   <stdio.h>
+#include   <unistd.h>
+#include   <signal.h>
+
+/* SIGINT 的处理程序 */
+static void signal_handler (int signo)
+{
+    if (signo == SIGINT)
+        printf ("Caught SIGINT!\n");
+    else if (signo == SIGTERM)
+        printf ("Caught SIGTERM!\n");
+    else {
+        /* 这永远不会发生 */
+        fprintf (stderr, "Unexpected signal!\n");
+        exit (EXIT_FAILURE);
+    }
+    exit (EXIT_SUCCESS);
+}
+
+int main (void)
+{
+    /*
+     * 注册 signal_handler 作为 SIGINT 的信号处理程序。
+     */
+    if (signal (SIGINT, signal_handler) == SIG_ERR) {
+        fprintf (stderr, "Cannot handle SIGINT!\n");
+        exit (EXIT_FAILURE);
+    }
+    /*
+     * 注册 signal_handler 作为 SIGTERM 的信号处理程序。
+     */
+    if (signal (SIGTERM, signal_handler) == SIG_ERR) {
+        fprintf(stderr, "Cannot handle SIGTERM!\n");
+        exit (EXIT_FAILURE);
+    }
+    /* 将 SIGPROF 重设为默认操作。 */
+    if (signal (SIGPROF, SIG_DFL) == SIG_ERR) {
+        fprintf (stderr, "Cannot reset SIGPROF!\n");
+        exit (EXIT_FAILURE);
+    }
+    /* 忽略 SIGHUP 。 */
+    if (signal (SIGHUP, SIG_IGN) == SIG_ERR) {
+        fprintf (stderr, "Cannot ignore SIGHUP!\n");
+        exit (EXIT_FAILURE);
+    }
+    for (;;)
+        pause ( );
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{执行与继承}
+
+当进程第一次执行时，所有的信号都被设为默认操作，除非父进程（执行新进程的进程）忽略它们；在这种情况下，新创建的进程也会忽略那些信号。换句话说，在新进程中任何父进程捕获的信号都被重置为默认操作，所有其它的信号保持不变。这是有道理的，因为一个刚执行的进程没有共享父进程的地址空间，因此任何注册过的信号处理程序都可能不存在。
+
+这种进程执行过程中的行为有一个重要的应用：当内核执行一个“后台”进程时（或者另一个后台进程执行另一个进程），新执行的进程应该忽略中断和退出符。因此，在内核执行一个后台进程前，它应该将SIGINT和SIGQUIT设置为SIG\_IGN。因此，处理这些信号的程序首先检查以确保信号不被忽略是通常的做法。例如：
+
+\begin{lstlisting}
+/* 只有 SIG_INT 不被忽略时才处理它 */
+if (signal (SIGINT, SIG_IGN) != SIG_IGN) {
+    if (signal (SIGINT, sigint_handler) == SIG_ERR)
+        fprintf (stderr, "Failed to handle SIGINT!\n");
+    }
+
+/* 只有 SIGQUIT 不被忽略时才处理它 */
+if (signal (SIGQUIT, SIG_IGN) != SIG_IGN) {
+    if (signal(SIGQUIT, sigquit_handler) == SIG_ERR)
+        fprintf (stderr, "Failed to handle SIGQUIT!\n");
+}
+\end{lstlisting}
+
+在设置信号的行为前需要检查信号的行为，这在signal()接口中是一个突出的缺点。稍后，我们会学习一个没有该问题的函数。
+
+fork()的行为可能与你期望的不同。当进程调用fork()时，子进程继承完全同样的信号语义。这也是有道理的，因为子进程与父进程共享同一个地址空间，因此父进程的信号处理程序仍然存在于子进程中。
+
+\subsection{映射信号编号为字符串}
+
+在我们到目前为止的例子中，我们将信号名称编号。但是有时将信号编号转换成代表信号名的字符串更为方便（甚至是要求）。有几种方法可以达到这个目的。一种是从静态定义列表中检索字符串：
+
+\begin{lstlisting}
+extern const char * const sys_siglist[];
+\end{lstlisting}
+
+sys\_siglist是一个保存系统支持的信号名称的字符串数组，使用信号编号进行索引。
+
+另一种选择是BSD定义的psignal()接口，这也是Linux支持的，且很常用：
+
+\begin{lstlisting}
+#include <signal.h>
+void psignal (int signo, const char *msg);
+\end{lstlisting}
+
+调用psignal()向stderr输出一个字符串，该字符串是你提供的msg参数，后面是一个冒号，一个空格和signo表示的信号名称。如果signo是无效的，输出信息将会进行提示。
+
+ 一个更好的接口是strsignal()。它不是标准化的，但是Linux和许多非Linux系统都支持它：
+
+\begin{lstlisting}
+#define _GNU_SOURCE
+#include <string.h>
+char *strsignal (int signo);
+\end{lstlisting}
+
+调用strsignal()返回一个描述signo所指定信号的指针。如果signo是无效的，返回的描述通常加以提示（一些支持该函数的Unix系统返回NULL）。返回的字符串直到下一次调用strsignal()前都是有效的，因此该函数不是线程安全的。
+
+sys\_siglist通常是你最好的选择。使用这种方法，我们可以重写我们先前的信号处理程序，如下：
+
+\begin{lstlisting}
+static void signal_handler (int signo)
+{
+    printf ("Caught %s\n", sys_siglist[signo]);
+}
+\end{lstlisting}
+
+\section{发送信号}
+
+kill()系统调用，我们经常使用的kill命令就是以它为基础的，kill()从一个进程向另一个进程发送信号：
+
+\begin{lstlisting}
+#include <sys/types.h>
+#include <signal.h>
+int kill (pid_t pid, int signo);
+\end{lstlisting}
+
+通常的用法是，kill()给pid代表的进程发送信号signo。
+
+如果pid是0，signo被发送给调用进程的进程组中的每个进程。
+
+如果pid是-1，signo会向每个调用进程有权限发送信号的进程发出信号，调用进程自身和init除外。我们将在下一小节讨论发送信号的权限管理。
+
+如果pid小于-1，signo被发送给进程组-pid。
+
+成功的情况下，kill()返回0。只要信号发出，该调用就被认为是成功的。失败的情况下（信号未被发送），调用返回-1，并将errno设置为以下之一：
+
+\begin{eqlist*}
+\item[EINVAL] 由signo指定的信号无效。
+\item[EPERM] 调用进程没有权限向指定的进程发送信号。
+\item[ESRCH] 由pid指定的进程或进程组不存在，或进程是僵尸进程。
+\end{eqlist*}
+
+\subsection{权限}
+
+为了给另一个进程发送信号，发送的进程需要合适的权限。有CAP\_KILL权限的进程（通常是根用户的进程）能够给任何进程发送信号。如果没有这种权限，发送进程的有效的或真正的用户ID必须等于接受进程的真正的或保存的用户ID。简单的说，用户能够给他或她自己的进程发送信号。
+
+\begin{wrapfigure}{l}{2.5cm}
+  \includegraphics[width=2cm,clip]{paipai.png}
+\end{wrapfigure}
+\mbox{}\begin{flushleft}Unix系统为SIGCOUT定义了一个特例：在同一个会话中，进程可以给任何其它的进程发送该信号。用户ID不必相同。 \end{flushleft}
+
+如果signo是0——前面提到过的空信号——调用不会发送信号，但是仍然进行错误检查。这对于测试一个进程是否有合适的权限给指定的进程发送信号时很有帮助。
+
+\subsection{例子}
+
+以下是如何给进程号为1722的进程发送SIGHUP的：
+
+\begin{lstlisting}
+int ret;
+ret = kill (1722, SIGHUP);
+if (ret)
+    perror ("kill");
+\end{lstlisting}
+
+以上片段和下面执行的kill命令功能相同：
+
+\begin{lstlisting}
+$ kill -HUP 1722
+\end{lstlisting}
+
+检查我们是否有权限给1722进程发送信号，而实际上不发送任何信号，我们可以使用如下方式进行：
+
+\begin{lstlisting}
+int ret;
+ret = kill (1722, 0);
+if (ret)
+    ; /* 我们没有权限 */
+else
+    ; /* 我们有权限 */
+\end{lstlisting}
+
+\subsection{给自己发送信号}
+
+raise()函数是一种简单的进程给自己发送信号的方法：
+
+\begin{lstlisting}
+#include <signal.h>
+int raise (int signo);
+\end{lstlisting}
+
+该调用：
+
+\begin{lstlisting}
+raise (signo);
+\end{lstlisting}
+
+和下面的调用是等价的：
+
+\begin{lstlisting}
+kill (getpid (), signo);
+\end{lstlisting}
+
+该调用成功时返回0，失败时返回非0值。它不设置errno。
+
+\subsection{给整个进程组发送信号}
+
+另一个非常方便的函数使得给特定进程组的所有进程发送信号变得非常简单，如果用进程组的ID的负值作为参数调用kill()就太麻烦了：
+
+\begin{lstlisting}
+#include <signal.h>
+int killpg (int pgrp, int signo);
+\end{lstlisting}
+
+该调用：
+
+\begin{lstlisting}
+killpg (pgrp, signo);
+\end{lstlisting}
+
+和下面的调用等价：
+
+\begin{lstlisting}
+kill (-pgrp, signo);
+\end{lstlisting}
+
+即使pgrp是0，这也是正确的，在这种情况下，kill()给调用进程组的每个进程发送信号signo。
+
+成功时，killpg()返回0，失败时，它返回-1，并将errno设置为以下之一：
+
+\begin{eqlist*}
+\item[EINVAL] 由signo指定的信号无效。
+\item[EPERM] 调用进程缺乏足够的权限给指定进程发送信号。
+\item[ESRCH] 由pgrp指定的进程组不存在。
+\end{eqlist*}
+
+\section{重入}
+
+当内核发送信号时，进程可能执行到代码的任何位置。例如，进程可能正执行一个重要的操作，如果被中断，进程将会处于不一致的状态（例如数据结构只更新了一半，或计算只进行了一部分）。进程甚至可能正在处理另一个信号。
+
+当信号到达时，信号处理程序不能说明进程正在执行什么代码；处理程序可以在任何情况下运行。因此任何该进程设置的信号处理程序都应该谨慎的对待它的操作和它涉及到的数据。信号处理程序必须注意，不要对进程被中断时正在做的事情做任何假设。尤其是当修改全局（也就是共享的）数据时必须要谨慎。总的来说，信号处理程序从不接触全局数据是一个比较好的选择；在接下来的部分，我们会看一种暂时阻止接收信号的方法，从而提供一种处理信号处理程序和进程其它部分共享数据的安全操作方法。
+
+系统调用和其它库函数又是什么情况呢？如果你的进程正在写文件或申请内存中，信号处理程序向同一个文件写入或也在调用malloc()会怎么样？或者当信号被发送时，进程正在调用一个使用静态缓存的函数，例如strsignal()，情况又会是什么样？
+
+一些函数显然是不可重入的。如果程序正在执行一个不可重入的函数中，信号发生了，信号处理程序调用同样的不可重入的函数，那么就会造成混乱。可重入函数是指可以安全的调用自身（或者从同一个进程的另一个线程）的函数。为了使函数可重入，函数决不能操作静态数据，必须只操作栈分配的数据或调用者提供的数据，不得调用任何不可重入的函数。
+
+\subsection{有保证的可重入函数}
+
+当写信号处理程序时，你必须假设中断的进程可能处于不可重入的函数中（就此而言，或其它的东西）。因此，信号处理程序必须只使用可重入函数。
+
+各种标准已经颁布了信号安全（即可重入）的函数清单，因此可在信号处理程序中安全的使用。最值得注意的是POSIX.1-2003和Unix信号规范，它们规定了在所有标准平台上都保证可重入和信号安全函数的清单。表9-2列出了这些函数。
+
+表9-2 可在信号中安全使用的确保可重入的函数
+
+\begin{tabular}{l l l}
+abort() & accept() & access()\\
+aio\_error() & aio\_return() & aio\_suspend()\\
+alarm() & bind() & cfgetispeed()\\
+cfgetospeed() & cfsetispeed() & cfsetospeed()\\
+chdir() & chmod() & chown()\\
+clock\_gettime() & close() & connect()\\
+creat() & dup() & dup2()\\
+execle() & execve() & Exit()\\
+\_exit() & fchmod() & fchown()\\
+fcntl() & fdatasync() & fork()\\
+fpathconf() & fstat() & fsync()\\
+ftruncate() & getegid() & geteuid()\\
+getgid() & getgroups() & getpeername()\\
+getpgrp() & getpid() & getppid()\\
+getsockname() & getsockopt() & getuid()\\
+kill() & link() & listen()\\
+lseek() & lstat() & mkdir()\\
+mkfifo() & open() & pathconf()\\
+pause() & pipe() & poll()\\
+posix\_trace\_event() & pselect() & raise()\\
+read() & readlink() & recv()\\
+recvfrom() & recvmsg() & rename()\\
+rmdir() & select() & sem\_post()\\
+send() & sendmsg() & sendto()\\
+setgid() & setpgid() & setsid()\\
+setsockopt() & setuid() & shutdown()\\
+sigaction() & sigaddset() & sigdelset()\\
+sigemptyset() & sigfillset() & sigismember()\\
+signal() & sigpause() & sigpending()\\
+sigprocmask() & sigqueue() & sigset()\\
+sigsuspend() & sleep() & socket()\\
+socketpair() & stat() & symlink()\\
+sysconf() & tcdrain() & tcflow()\\
+tcflush() & tcgetattr() & tcgetpgrp()\\
+tcsendbreak() & tcsetattr() & tcsetpgrp()\\
+time() & timer\_getoverrun() & timer\_gettime()\\
+timer\_settime() & times() & umask()\\
+uname() & unlink() & utime()\\
+wait() & waitpid() & write()\\
+\end{tabular}
+
+有更多的函数是安全的，但是Linux和其它POSIX标准的系统只保证这些函数是可重入的。
+
+\section{信号集}
+
+我们将在本章稍后提到的一些函数需要操作信号集，例如被一个进程阻塞的信号的集合，或者待处理的信号集合。以下列出的信号集合操作可以管理这些信号集：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigemptyset (sigset_t *set);
+int sigfillset (sigset_t *set);
+int sigaddset (sigset_t *set, int signo);
+int sigdelset (sigset_t *set, int signo);
+int sigismember (const sigset_t *set, int signo);
+\end{lstlisting}
+
+sigemptyset()初始化由set给定的信号集，将集合标记为空（所有的信号都被排除在集合外）。sigfillset()初始化由set给定的信号集，将它标记为满（所有的信号都包括在集合内）。两个函数都返回0。你应该在使用信号集之前调用这两个函数之一。
+
+sigaddset()将signo加入到set给定的信号集中，sigdelset()将signo从set给定的信号集中删除。成功时两者都返回0，错误时都返回-1，在这种情况下errno被设置成EINVAL，这意味着signo是一个无效的信号标识符。
+
+如果signo在由set指定的信号集中，sigismember()返回1，如果不在则返回0，错误时返回-1。在后一种情况下errno被设置为EINVA，意味着signo无效。
+
+\subsection{更多的信号集函数}
+
+上述的函数都是由POSIX标准定义的，可以在任何现代的Unix系统中找到。Linux也提供了一些非标准的函数：
+
+\begin{lstlisting}
+#define _GNU_SOURCE
+#define <signal.h>
+int sigisemptyset (sigset_t *set);
+int sigorset (sigset_t *dest, sigset_t *left, sigset_t *right);
+int sigandset (sigset_t *dest, sigset_t *left, sigset_t *right);
+\end{lstlisting}
+
+如果由set给定的信号集是空的sigisemptyset()返回1，否则返回0。
+
+sigorset()将信号集left和right的并（二进制或）赋给dest。sigandset()将信号集left和right的交（二进制与）赋给dest。成功时两者都返回0，错误时返回-1，并将errno设置为EINVAL。
+
+这些函数是有用的，但是希望完全符合POSIX标准的程序应该避免使用它们。
+
+\section{阻塞信号}
+
+前面我们讨论了重入和由信号处理程序异步运行引发的问题。我们讨论了不能从信号处理程序内部调用的函数，因为它们是不可重入的。
+
+但是如果你的程序需要在信号处理程序和程序其它部分共享数据时该怎么办？如果你程序中的某些部分在运行期间不希望被中断（包括来自信号处理程序的中断）时该怎么办？我们把这些部分叫做临界区，我们通过临时挂起信号来保护它们。我们称这些信号被阻塞。任何被挂起的信号都不会被处理，直到它们被解除阻塞。进程可以阻塞任意多个信号；被进程阻塞的信号叫做该进程的信号掩码。POSIX定义，Linux实现了一个管理进程信号掩码的函数：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigprocmask (int how,
+                 const sigset_t *set,
+                 sigset_t *oldset);
+\end{lstlisting}
+
+sigprocmask()的行为取决于how的值，它是以下标识之一：
+
+\begin{eqlist*}
+\item[SIG\_SETMASK] 调用进程的信号掩码变成set。
+\item[SIG\_BLOCK] set中的信号被加入到调用进程的信号掩码中。也就是说，信号掩码变成了当前信号掩码和set的并集（二进制或）。
+\item[SIG\_UNBLOCK] set中的信号被从调用进程的信号掩码中移除。也就是说，信号掩码变成了当前信号掩码和set补集（二进制非）的交集（二进制与）。将一个未阻塞的信号解除阻塞是非法的。
+\end{eqlist*}
+
+如果oldset是非空的，该函数将oldset设置为先前的信号集。
+
+如果set是空的，该函数会忽略how，并且不改变信号掩码，但仍然设置oldset的信号掩码。换句话说，给set一个空值是检测当前信号掩码的一种方法。
+
+ 调用成功，返回0。失败时返回-1，把errno设置为EINVAL，表示how是无效的，或者设置为EFAULT，表示set或oldset是无效指针。
+
+阻塞SIGKILL或SIGSTOP是不允许的。sigprocmask()会悄悄的忽略任何将这两个信号加入信号掩码的尝试。
+
+\subsection{获取待处理信号}
+
+当内核产生一个被阻塞的信号时，该信号未被发送。我们把它叫做待处理信号。当一个待处理信号解除阻塞时，内核会把它发送给进程处理。
+
+POSIX定义了一个检测待处理信号集的函数：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigpending (sigset_t *set);
+\end{lstlisting}
+
+成功的调用sigpending()会将set设置为待处理的信号集，并返回0。失败时，该调用返回-1，并将errno设置成EFAULT，意味着set是一个无效指针。
+
+\subsection{等待信号集}
+
+下面是第三个POSIX定义的允许进程临时改变信号掩码的函数，该函数始终出于等待状态，直到产生一个终止该进程或被该进程处理的信号：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigsuspend (const sigset_t *set);
+\end{lstlisting}
+
+如果一个信号终止了进程，sigsuspend()不返回。如果一个信号被发送和处理了，sigsuspend()在信号处理程序返回后，返回-1并将errno设置为EINTR。如果set是一个无效指针，errno被设置成EFAULT。
+
+一般在获取已达到信号和在程序运行期间阻塞在临界区的信号时使用sigsuspend()。进程首先使用sigprocmask()来阻塞一个信号集，将旧的信号掩码保存在oldset中。退出临界区后，进程会调用sigsuspend()，将oldset赋给set。
+
+\section{高级信号管理}
+
+我们在本章开头学习的signal()函数是非常基本的。它是C标准库的一部分，因此必须考虑对它运行的操作系统能力做最小的假设，它只提供了最低限度的信号管理的标准。作为另一种选择，POSIX定义了sigaction()系统调用，它提供了更加强大的信号管理能力。除此之外，当信号处理程序运行时，你可以用它来阻塞特定信号的接收，你也可以用它来获取信号发送时各种操作系统和进程状态的信息：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigaction (int signo,
+               const struct sigaction *act,
+               struct sigaction *oldact);
+\end{lstlisting}
+
+调用sigaction()会改变由signo表示的信号的行为，signo可以是除了SIGKILL和SIGSTOP外的任何值。如果act是非空的，该系统调用将该信号的当前行为替换成由act指定的行为。如果oldact是非空的，该调用会存储先前（或者是当前的，如果act是非空的）给定的信号行为。
+
+sigaction结构允许精细的控制信号。头文件<sys/signal.h>包含<signal.h>以如下形式定义该结构
+
+\begin{lstlisting}
+struct sigaction {
+    void (*sa_handler)(int);   /* 信号处理程序或操作 */
+    void (*sa_sigaction)(int, siginfo_t *, void *);
+    sigset_t sa_mask;          /* 阻塞的信号 */
+    int sa_flags;              /* 标志 */
+    void (*sa_restorer)(void); /* 已经过时且不符合 POSIX 标准 */
+}
+\end{lstlisting}
+
+sa\_handler域规定了接收信号时采取的操作。对于signal()来说，该域可能是SIG\_DFL，表示默认操作，可能是SIG\_IGN，指示内核忽略该信号，或者是一个指向信号处理函数的指针。该函数和signal()安装的信号处理程序具有相同的原型：
+
+\begin{lstlisting}
+void my_handler (int signo);
+\end{lstlisting}
+
+如果sa\_flags被置成SA\_SIGINFO，那么将由sa\_sigaction而不是sa\_handle指示信号处理函数。该函数的原型略有不同：
+
+\begin{lstlisting}
+void my_handler (int signo, siginfo_t *si, void *ucontext);
+\end{lstlisting}
+
+该函数接受信号编号作为它的第一个参数，siginfo\_t结构作为第二个参数，ucontext\_t结构（强转成void指针）作为第三个参数。它没有返回值。siginfo\_t结构给信号处理程序提供了丰富的信息；我们很快就会看到它。
+
+请注意，在一些机器结构中（可能是其它的Unix系统），sa\_handler和sa\_sigaction是在一个联合中，因此你不能给两个域同时赋值。
+
+sa\_mask域提供了应该在执行信号处理程序时被阻塞的信号集。这使得程序员为多个信号处理程序间的重入提供适当的保护。当前正在处理的信号也是被阻塞的，除非将sa\_flags设置成了SA\_NODEFER标志。不可以阻塞SIGKILL或SIGSTIO；该调用会在sa\_mask中悄悄的忽略它们。
+
+sa\_flag域是零，一或更多改变signo表示信号的标志的位掩码。我们已经看过了SA\_SIGINFO和SA\_NODEFER标志，sa\_flags的其它值包括以下几个：
+
+\begin{eqlist*}
+\item[SA\_NOCLDSTOP] 如果signo是SIGCHLD，该标志指示系统在子进程停止或继续执行时不要提供通知。
+\item[SA\_NOCLDWAIT] 如果signo是SIGCHLD，该标志可以自动获取子进程：子进程结束时不会变成僵尸进程，父进程不需要（并且也不能）为子进程调用wait()。见第五章对子进程，僵尸进程和wait()的讨论。
+\item[SA\_NOMASK] 该标志已过时且不符合POSIX标准，该标志与SA\_NODEFER等价（此部分前面讨论过）。使用SA\_NODEFER代替该标志，但是在一些旧的代码中还能见到该标志。
+\item[SA\_ONESHOT] 该标志已过时且不符合POSIX标准，该标志与SA\_NODEFER等价（在下文会讨论）。使用SA\_NODEFER代替该标志，但是在一些旧的代码中还能见到该标志。
+\item[SA\_ONSTACK] 该标志指示系统在一个替代的信号栈中调用给定的信号处理程序，该信号栈是由sigaltstack()提供的。如果你没提供一个替代的栈，系统会使用默认的栈，也就是说，系统的行为和未提供该标志一样。替代的信号栈是很罕见的，虽然它们在一些较小线程栈的pthreads应用程序中是有用的，这些线程栈在被一些信号处理程序使用时可能会溢出。在本书中我们不再进一步讨论sigaltstack()。
+\item[SA\_RESTART] 该标志可以使被信号中断的系统调用以BSD风格重新启动。
+\item[SA\_RESETHAND] 该标志表示“一次性”模式。一旦信号处理程序返回，给定信号会被重设为默认操作。
+\end{eqlist*}
+
+sa\_restorer域是过时的，并且也不在Linux中使用。它不是POSIX的一部分。假装它不存在，不必去管它。
+
+成功时sigaction()返回0。失败时，该调用返回-1，并将errno设置为以下错误代码之一：
+
+\begin{eqlist*}
+\item[EFAULT] act或oldact是无效指针。
+\item[EINVAL] signo是无效的信号，SIGKILL或SIGSTOP。
+\end{eqlist*}
+\subsection{siginfo\_t结构}
+
+siginfo\_t结构也是在<sys/signal.h>中定义的，如下：
+
+\begin{lstlisting}
+typedef struct siginfo_t {
+    int si_signo;      /* 信号编号 */
+    int si_errno;      /* errno 值 */
+    int si_code;       /* 信号代码 */
+    pid_t si_pid;      /* 发送进程的PID */
+    uid_t si_uid;      /* 发送进程的真实UID */
+    int si_status;     /* 退出值或信号 */
+    clock_t si_utime;  /* 用户时间消耗 */
+    clock_t si_stime;  /* 系统时间消耗 */
+    sigval_t si_value; /* 信号载荷值 */
+    int si_int;        /* POSIX.1b 信号 */
+    void *si_ptr;      /* POSIX.1b 信号 */
+    void *si_addr;     /* 造成错误的内存位置 */
+    int si_band;       /* 带事件 */
+    int si_fd;         /* 文件描述符 */
+};
+\end{lstlisting}
+
+这种结构中都是传递给信号处理程序的信息（如果你使用sa\_sigaction代替sa\_sighandler）。在现代计算技术中，许多人认为Unix信号模型是一种非常糟糕的实现IPC（进程间通信）的方法。这很有可能是因为当他们应该使用sigaction()和SA\_SIGINFO时，这些人仍然坚持使用signal()。siginfo\_t结构为我们打开了方便之门，在信号之上又衍生了大量的功能。
+
+在该结构中有许多有趣的数据，包括发送信号进程的信息，以及信号产生的原因。以下是对每个域的详细描述：
+
+\begin{eqlist*}
+\item[si\_signo] 信号的编号。在你的信号处理程序中，第一个参数也提供了该信息（避免使用一个复引用的指针）。
+\item[si\_errno] 如果是非零值，表示与该信号有关的错误代码。该域对所有的信号都有效。
+\item[si\_code] 解释进程为什么收到信号以及信号由哪（例如，来自kill()）发出。我们会在下一部分浏览一下可能的值。该域对所有的信号都有效。
+\item[si\_pid] 对于SIGCHLD，表示终止进程的PID。
+\item[si\_uid] 对于SIGCHLD，表示终止进程自己的UID。
+\item[si\_status] 对于SIGCHLD，表示终止进程的退出状态。
+\item[si\_utime] 对于SIGCHLD，表示终止进程消耗的用户时间。
+\item[si\_stime] 对于SIGCHLD，表示终止进程消耗的系统时间。
+\item[si\_value] si\_int和si\_ptr的联合。
+\item[si\_int] 对于通过sigqueue()发送的信号（见本章稍后的“发送带附加信息的信号”），以整数类型作为参数。
+\item[si\_ptr] 对于通过sigqueue()发送的信号（见本章稍后的“发送带附加信息的信号”），以void指针类型作为参数。
+\item[si\_addr] 对于SIGBUS，SIGFPE，SIGILL，SIGSEGV和SIGTRAP，该void指针包含了引发错误的地址。例如对于SIGSEGV，该域包含非法访问内存的地址（因此常常是NULL）。
+\item[si\_band] 对于SIGPOLL，表示si\_fd中列出的文件描述符的带外和优先级信息。
+\item[si\_fd] 对于SIGPOLL，表示操作完成的文件的描述符。
+\end{eqlist*}
+
+si\_value，si\_int和si\_ptr是相对复杂的部分，因为进程可以用它们给另一个进程传递任何数据。因此，你可以用它们发送一个整数或一个指向数据结构的指针（注意，如果进程不共享地址空间，那么指针是没有用的）。在接下来的“发送带附加信息的信号”部分会讨论这些域。
+
+POSIX只保证前三个域是对于所有信号都有效的。其它的域只有在处理相应的信号时才被访问。例如，只有信号是SIGPOLL时，你才应该访问si\_fd域。
+
+\subsection{si\_code的精彩世界}
+
+si\_code域说明信号发生的原因。对于用户发送的信号，该域说明信号是如何被发送的。对于内核发送的信号，该域说明信号发送的原因。
+
+以下的si\_code值对任何信号都是有效的。它们说明了信号如何/为什么被发送。
+
+\begin{eqlist*}
+\item[SI\_ASYNCIO] 由于完成异步I/O而发送该信号（见第五章）。
+\item[SI\_KERNEL] 信号由内核产生。
+\item[SI\_MESGQ] 由于一个POSIX消息队列的状态该变而发送该信号（不在本书的范围内）。
+\item[SI\_QUEUE] 信号由sigqueue()发送（见下一部分）。
+\item[SI\_TIMER] 由于POSIX定时器超时而发送该信号（见第十章）。
+\item[SI\_TKILL] 信号由tkill()或tgkill()发送。这些系统调用是线程库使用的，不在本书的讨论范围内。
+\item[SI\_SIGIO] 由于SIGIO排队而发送该信号。
+\item[SI\_USER] 信号由kill()或raise()发送。
+\end{eqlist*}
+
+以下的si\_code值只对SIGBUS有效。它们说明了发生硬件错误的类型：
+
+\begin{eqlist*}
+\item[BUS\_ADRALN] 进程发生了对齐错误（间第八章对对齐的讨论）。
+\item[BUS\_ADRERR] 进程访问无效的物理地址。
+\item[BUS\_OBJERR] 进程造成了其它类型的硬件错误。
+\end{eqlist*}
+
+ 对于SIGCHLD，以下的值表示子进程给父进程发送信号时的行为：
+
+\begin{eqlist*}
+\item[CLD\_CONTINUED] 子进程被停止，但已经继续执行。
+\item[CLD\_DUMPED] 子进程非正常终止。
+\item[CLD\_EXITED] 子进程通过exit()正常终止。
+\item[CLD\_KILLED] 子进程被杀死了。
+\item[CLD\_STOPPED] 子进程被停止了。
+\item[CLD\_TRAPPED] 子进程进入一个陷井。
+\end{eqlist*}
+
+以下的值只对SIGFPE有效。它们说明了发生算术错误的类型：
+
+\begin{eqlist*}
+\item[FPE\_FLTDIV] 进程执行了一个除以0的浮点数运算。
+\item[FPE\_FLTOVF] 进程执行了一个溢出的浮点数运算。
+\item[FPE\_FLTINV] 进程执行了一个无效的浮点数运算。
+\item[FPE\_FLTRES] 进程执行了一个不精确或无效结果的浮点数运算。
+\item[FPE\_FLTSUB] 进程执行了一个造成下标超出范围的浮点数运算。
+\item[FPE\_FLTUND] 进程执行了一个造成下溢的浮点数运算。
+\item[FPE\_INTDIV] 进程执行了一个除以0的整数运算。
+\item[FPE\_INTOVF] 进程执行了一个溢出的整数运算。
+\item[FPE\_FLTDIV] 进程执行了一个除以0的浮点数运算。
+\item[FPE\_FLTOVF] 进程执行了一个溢出的浮点数运算。
+\item[FPE\_FLTINV] 进程执行了一个无效的浮点数运算。
+\item[FPE\_FLTRES] 进程执行了一个不精确或无效结果的浮点数运算。
+\item[FPE\_FLTSUB] 进程执行了一个造成下标超出范围的浮点数运算。
+\item[FPE\_FLTUND] 进程执行了一个造成下溢的浮点数运算。
+\item[FPE\_INTDIV] 进程执行了一个除以0的整数运算。
+\item[FPE\_INTOVF] 进程执行了一个溢出的整数运算。
+\end{eqlist*}
+
+以下si\_code值只对SIGILL有效。它们说明了执行非法指令的性质：
+
+\begin{eqlist*}
+\item[ILL\_ILLADR] 进程试图进入非法的寻址模式。
+\item[ILL\_ILLOPC] 进程试图执行一个非法的操作码。
+\item[ILL\_ILLOPN] 进程试图执行一个非法的操作数。
+\item[ILL\_PRVOPC] 进程试图执行特权操作码。
+\item[ILL\_PRVREG] 进程试图在特权寄存器上运行。
+\item[ILL\_ILLTRP] 进程试图进入一个非法的陷井。
+\end{eqlist*}
+
+对于所有的这些值，si\_addr都指向非法操作的地址。
+
+对于SIGPOLL，以下的值表明标识形成信号的I/O事件：
+
+\begin{eqlist*}
+\item[POLL\_ERR] 发生了I/O错误。
+\item[POLL\_HUP] 设备挂起或套接字断开。
+\item[POLL\_IN] 文件有可读数据。
+\item[POLL\_MSG] 有一个消息。
+\item[POLL\_OUT] 文件能够被写入。
+\item[POLL\_PRI] 文件有可读的高优先级数据。
+\end{eqlist*}
+
+以下的代码对SIGSEGV有效，描述了两种非法访存的类型：
+
+\begin{eqlist*}
+\item[SEGV\_ACCERR] 进程以无效的方式访问有效的内存区域，也就是说进程违反了内存访问的权限。
+\item[SEGV\_MAPERR] 进程访问无效的内存区域。
+\end{eqlist*}
+
+对于这两个值，si\_addr包含了非法操作的地址。
+
+对于SIGTRAP，这两个si\_code值标识了进入陷井的类型：
+
+\begin{eqlist*}
+\item[TRAP\_BRKPT] 进程进入一个断点。
+\item[TRAP\_TRACE] 进程进入了一个追踪陷井。
+\end{eqlist*}
+
+注意，si\_code是一个数值域，而不是一个位域。
+
+\section{发送带附加信息的信号}
+
+正如我们前面部分看到的，以SA\_SIGINFO标志注册的信号处理程序传递了一个siginfo\_t参数。该结构包含了一个名为si\_value的域，该域可以让信号产生者向信号接受者传递一些附加信息。
+
+由POSIX定义的sigqueue()函数，允许进程发送带附加信息的信号：
+
+\begin{lstlisting}
+#include <signal.h>
+int sigqueue (pid_t pid,
+              int signo,
+              const union sigval value);
+\end{lstlisting}
+
+sigqueue()和kill()的运行方式很像。成功时，由signo表示的信号被加入到由pid指定的进程或进程组的队列中，并返回0。信号的载荷是由数值给定的，它是一个整数和void指针的联合：
+
+\begin{lstlisting}
+union sigval {
+    int sival_int;
+    void *sival_ptr;
+};
+\end{lstlisting}
+
+失败时，该调用返回-1，并将errno设置为以下之一：
+
+\begin{eqlist*}
+\item[EINVAL] 由signo指定的信号无效。
+\item[EPERM] 调用进程缺乏足够的权限给任何指定的进程发送信号。发送信号的权限要求和kill()是一样的（见本章前面的“发送信号”部分）。
+\item[ESRCH] 由pid指定的进程或进程组不存在，或者进程是一个僵尸进程。
+\end{eqlist*}
+
+\subsection{例子}
+
+这个例子是给pid为1722的进程发送一个附加为整数值的SIGUSR2信号，其值为404：
+
+\begin{lstlisting}
+sigval value;
+int ret;
+value.sival_int = 404;
+ret = sigqueue (1722, SIGUSR2, value);
+if (ret)
+    perror ("sigqueue");
+\end{lstlisting}
+
+如果1722进程用SA\_SIGINFO处理程序处理SIGUSR2，它会发现signo被设成了SIGUSR2，si->si\_int被设成了404，si->si\_code被设成了SI\_QUEUE。
+
+\section{结论}
+
+信号在很多Unix程序员中的名声很坏。它们是古老且过时的内核与用户间的通讯机制，顶多能算是一种原始的进程间通信机制。在多线程程序和循环事件中，信号往往是不合适的。
+
+然而，不管是好是坏，我们还需要它们。信号是从内核接收许多通知（例如通知进程执行了非法的操作码）的唯一方式。此外，信号还是Unix（Linux也一样）终止进程和管理父/子进程关系的方式。因此，我们坚持使用它们。
+
+批评信号的主要理由之一是，很难写出一个安全的可重入的信号处理程序。如果你能简化你的信号处理程序，并且只使用表9-2列出的函数（你可以用任意多个！），它们就应该是安全的。
+
+另一个信号外在的不足是，许多程序员仍然使用signal()和kill()而不是sigaction()和sigqueue()来管理信号。正如最后两小节表明的，当使用SA\_SIGINFO风格的处理程序时，信号的健壮性和表达力会显著增强。尽管我本人不喜欢信号（我希望看到信号被一个基于文件描述符的可修改的机制取代，这实际上是未来Linux内核版本正在考虑的事）绕过它们的缺陷并使用Linux的高级信号接口，确实可以避免大多数的麻烦（如果不是发牢骚）。

@@ -1,0 +1,333 @@
+% -*-coding: utf-8 -*-
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 重定义字体命令
+% 注意win2000,没有 simsun,　最好到网上找一个
+% 一些字体是office2000 带的
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\ifx\atempxetex\usewhat 
+  % xelatex调用系统字体；
+  % 【请在命令行下用 "fc-list" 列出系统的字体，选择其对应的名字】
+  % 【只列出中文字体的命令 "fc-list :lang=zh-cn" 】
+\defaultfontfeatures{Mapping=tex-text}
+\setmainfont{Times New Roman}   % 正文中的英文 采用 Times New Roman 字体；
+\setsansfont{Times New Roman}   % 正文中的英文 采用 Times New Roman 字体；
+\setmonofont{Courier New}
+\setCJKmainfont{SimSun}
+\setCJKsansfont{SimHei}
+%\setCJKmonofont{LiSu}
+\setCJKmonofont{SimSun}
+\setCJKfamilyfont{song}{SimSun}
+\setCJKfamilyfont{hei}{SimHei}
+\setCJKfamilyfont{fs}{FangSong_GB2312} % XP对应 FangSong_GB2312，Vista对应FangSong，注意根据系统切换
+\setCJKfamilyfont{kai}{KaiTi_GB2312}   % XP对应 KaiTi_GB2312，Vista对应KaiTi，注意根据系统切换
+\setCJKfamilyfont{li}{LiSu}
+\fi
+\newcommand{\song}{\CJKfamily{song}}    % 宋体   (Windows自带simsun.ttf)
+\newcommand{\fs}{\CJKfamily{fs}}        % 仿宋体 (Windows自带simfs.ttf)
+\newcommand{\kai}{\CJKfamily{kai}}      % 楷体   (Windows自带simkai.ttf)
+\newcommand{\hei}{\CJKfamily{hei}}      % 黑体   (Windows自带simhei.ttf)
+\newcommand{\li}{\CJKfamily{li}}        % 隶书   (Windows自带simli.ttf)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 重定义字号命令
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newcommand{\yihao}{\fontsize{26pt}{26pt}\selectfont}       % 一号, 1.倍行距
+\newcommand{\xiaoyi}{\fontsize{24pt}{24pt}\selectfont}      % 小一, 1.倍行距
+\newcommand{\erhao}{\fontsize{22pt}{22pt}\selectfont}       % 二号, 1.倍行距
+\newcommand{\xiaoer}{\fontsize{18pt}{18pt}\selectfont}      % 小二, 单倍行距
+\newcommand{\sanhao}{\fontsize{16pt}{16pt}\selectfont}      % 三号, 1.倍行距
+\newcommand{\xiaosan}{\fontsize{15pt}{15pt}\selectfont}     % 小三, 1.倍行距
+\newcommand{\sihao}{\fontsize{14pt}{14pt}\selectfont}       % 四号, 1.0倍行距
+\newcommand{\banxiaosi}{\fontsize{13pt}{13pt}\selectfont}   % 半小四, 1.0倍行距
+\newcommand{\xiaosi}{\fontsize{12pt}{12pt}\selectfont}      % 小四, 1.倍行距
+\newcommand{\dawuhao}{\fontsize{11.5pt}{11.5pt}\selectfont} % 大五号, 单倍行距
+\newcommand{\wuhao}{\fontsize{10.5pt}{10.5pt}\selectfont}   % 五号, 单倍行距
+\newcommand{\xiaowu}{\fontsize{9.5pt}{9.5pt}\selectfont}    % 五号, 单倍行距
+\newcommand{\banbanxiaosi}{\fontsize{12pt}{12pt}\selectfont}% 半半小四, 1.0倍行距
+
+%避免宏包 hyperref 和 arydshln 不兼容带来的目录链接失效的问题。
+\def\temp{\relax}
+\let\temp\addcontentsline
+\gdef\addcontentsline{\phantomsection\temp}
+\newcommand*{\subfigencaptionlist}{} % 子图形加入目录时用
+
+\makeatletter
+\gdef\hitempty{}
+
+\newcommand{\mr}[1]{\mathrm{#1}} %定义新命令，用\mr来代替\mathrm
+\def \ReferenceEName {References} %%定义参考文献的标题
+\def \ReferenceCName {参考文献}
+
+%定义图表章节双标题命令
+\newcommand{\figenname}{Fig.}
+\newcommand{\listfigenname}{List of Figures}
+\newfloatlist[chapter]{figen}{fen}{\listfigenname}{\figenname}
+\newfixedcaption{\figencaption}{figen}
+\renewcommand{\thefigen}{\thechapter-\arabic{figure}}
+\renewcommand{\@cftmakefentitle}{\chapter*{\listfigenname\@mkboth{\bfseries\listfigenname}{\bfseries\listfigenname}}}
+
+
+\newcommand{\FigureBiCaption}[2]
+{\renewcommand{\figurename}{图}
+\caption{\protect\setlength{\baselineskip}{1.5em}#1} %\protect\setlength{\baselinestretch}{1.3}\selectfont
+\vspace{-1.3ex}%-0.5ex
+\figencaption{\protect\setlength{\baselineskip}{1.5em}#2}%
+\vspace{-3.4mm}
+%%
+%%其子图形加入目录
+\def\hittemp{}
+ \@for \hittemp:=\subfigencaptionlist \do {%
+        \ifx \hitempty\hittemp\relax \else
+          \addcontentsline{fen}{subfigen}{\protect\numberline\hittemp}
+        \fi}
+ \gdef\subfigencaptionlist{}
+}
+
+\setcounter{fendepth}{2} %英文图形目录的深度 1(只有一级目录) 2(有两级目录)
+\setcounter{lofdepth}{2} %中文图形目录的深度 1(只有一级目录) 2(有两级目录)
+\renewcommand*{\l@subfigure}{\@dottedxxxline{\ext@subfigure}{2}{3.8em}{1.5em}} %中文图形目录 subfigure
+\gdef\l@subfigen{\@dottedtocline{2}{3.8em}{1.5em}}%英文图形目录 latex
+\newif\ifsubfigtoc
+\ifnum \tw@ > \@nameuse{c@fendepth} \subfigtocfalse \else \subfigtoctrue \fi
+\newbox\tempbox
+\renewcommand*{\subcapsize}{\wuhao} %设置子图英文标题的字号为五号；
+\def\SubfigEnCaption{%
+  \@ifnextchar [%
+      {\SubfigEnCap}%
+      {\SubfigEnCap[0pt]}
+} \long\def\SubfigEnCap[#1]#2  %产生caption  有水平间距调整
+{ \ifsubfigtoc %加入目录这个动作，一定要在 父图 之后,所在先暂存在 subfigencaptionlist
+    \protected@xdef\subfigencaptionlist{\subfigencaptionlist,%
+        {{\thesubfigure}\protect\ignorespaces{#2}}}
+  \fi \vspace{1pt}
+  \sbox{\tempbox}{\thesubfigure\hskip\subfiglabelskip #2}%
+  \ifthenelse{\lengthtest{\wd\tempbox > \linewidth}}%
+  {\\[-20pt]\hspace*{#1}\parbox[t]{\linewidth}{\flushleft\noindent\wuhao\selectfont\thesubfigure\hskip\subfiglabelskip \centering#2\hangafter=1\hangindent=15pt}}%
+  {\\\hspace*{#1}\centerline{\wuhao\selectfont\thesubfigure\hskip\subfiglabelskip #2}}
+} 
+
+%\newcommand{\SubfigureCaption}[2]  % Two Parameters, the first one is the width of the subfigure,
+%{
+%\addtocounter{subfigure}{-1}       % the second one is the caption of the subfigure
+%\vspace{-2ex}
+%\subfigure[#2]{\rule{#1}{0pt}}
+%}
+
+\newcommand{\tblenname}{Table} %define tbl instead of table
+\newcommand{\listtblenname}{List of Tables}
+\newfloatlist[chapter]{tblen}{ten}{\listtblenname}{\tblenname}
+\newfixedcaption{\tblencaption}{tblen}
+\renewcommand{\thetblen}{\thechapter-\arabic{table}}% 将tblen换成table，因为table和tablen编号一致，而tablen在\longbitoccaption定义中无效。
+\renewcommand{\@cftmaketentitle}{\chapter*{\listtblenname\@mkboth{\bfseries\listtblenname}{\bfseries\listtblenname}}}
+
+
+\newcommand{\TableBiCaption}[2]
+{
+\renewcommand{\tablename}{表}
+\caption{\protect\setlength{\baselineskip}{1.5em}#1}
+\vspace{-2ex}
+\tblencaption{\protect\setlength{\baselineskip}{1.5em}#2}
+\vspace{1ex}
+}
+
+%%%% 长表格的caption在中英文表格目录中正常显示
+\setlength{\LTcapwidth}{\textwidth} %长表格宽度
+\def\@cont@LT@LTBiToeCaption#1[#2]#3{%
+  \LT@makecaption#1\fnum@table{#3}%
+  \def\@tempa{#2}%
+  \ifx\@tempa\@empty\else
+    {\let\\\space
+      %\phantomsection
+      \addcontentsline{ten}{tblen}{\protect\numberline{\thetable}{#2}}}%%\addcontentsline{lot}{table}{\protect\numberline{}{#2}}}%
+  \fi}
+\def\LT@c@ption#1[#2]#3{%
+  \LT@makecaption#1\fnum@table{#3}%
+  \def\@tempa{#2}%
+  \ifx\@tempa\@empty\else
+     {\let\\\space
+     %\phantomsection
+     \addcontentsline{lot}{table}{\protect\numberline{\thetable}{#2}}}%
+  \fi}
+\let\@cont@oldLT@c@ption\LT@c@ption
+\newcommand*{\LTBiTocCaption}[5]{
+  \@if@contemptyarg{#1}{\caption{\centering #2}}{\caption[#1]{\centering #2}}%
+  \global\let\@cont@oldtablename\tablename
+  \gdef\tablename{Table} %#3
+  \global\let\LT@c@ption\@cont@LT@LTBiToeCaption
+  \\
+  \@if@contemptyarg{#4}{\caption{\centering #5}}{\caption[#4]{\centering #5}}%
+  \global\let\tablename\@cont@oldtablename
+  \global\let\LT@c@ption\@cont@oldLT@c@ption}
+
+\renewcommand{\cfttblendotsep}{1} %自定义图表目录中的点间距大小
+\renewcommand{\cftfigendotsep}{1}
+
+%\renewcommand{\tablename}{表}  %jdg提供的一种方法，英文长表会添加到中文目录中去，上面定义
+%\newcommand{\LTBiCaption}[2]   %\bicaptiontwotoc 主要就是解决这个问题。
+%{%
+%\caption{#1} \gdef\tablename{Table}
+%\\ %[-3.5ex]
+%\caption{#2}
+%\gdef\tablename{表}\\ %[-1.5ex]
+%}
+
+%%%---公式中符号描述----start----
+%\begin{formulasymb}{式中}{-3pt}%-3pt,-20pt调与上方的间距。
+%  \fdesfirst{第一标签}{控制控制控制控制控制}
+%  \fdes{其他标签}{控制控制控制控制控制}
+%\end{formulasymb}
+\newenvironment{formulades}[1]%
+{\noindent\begin{list}{}{%
+\setlength\topsep{0pt}
+\settowidth{\labelwidth}{#1}
+\setlength{\labelsep}{1mm}
+\setlength{\leftmargin}{\labelwidth+\labelsep}
+}}{\end{list}}
+\newenvironment{formulasymb}[2]%-\!-\!-\!-
+{\vspace*{#2}\newcommand{\fdesfirst}[2]%
+{\begin{formulades}{#1\hspace*{26pt}##1~\cdash}\item[#1\hspace*{26pt}##1~\cdash]{##2}\end{formulades}\vspace*{-21pt}}%自己调距
+\newcommand{\fdes}[2]{\begin{formulades}{#1\hspace{26pt}##1~\cdash}\item[##1~\cdash]{##2}\end{formulades}\vspace*{-21pt}}}%自己调距
+{\vspace{21pt}\relax}%21pt调距
+%%----公式中符号描述----end-----
+
+%% ---- 左对齐的公式 start-----   \begin{flualign} a=c \end{flualign}
+\newenvironment{flualign}{%
+    \@fleqntrue
+    \@mathmargin = -1sp
+    \@mathmargin\leftmargini minus\leftmargini
+    \let\mathindent=\@mathmargin
+  \start@align\@ne\st@rredfalse\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+  \ignorespacesafterend
+  \@fleqnfalse
+}
+%%  ---- 左对齐的公式  end----
+
+%重新定义BiChapter命令，可实现标题手动换行，但不影响目录
+\def\BiChapter{\relax\@ifnextchar [{\@BiChapter}{\@@BiChapter}}
+\def\@BiChapter[#1]#2#3{\chapter[#1]{#2}
+    \addcontentsline{toe}{chapter}{\bfseries \xiaosi Chapter \thechapter\hspace{0.5em} #3}}
+\def\@@BiChapter#1#2{\chapter{#1}
+    \addcontentsline{toe}{chapter}{\bfseries \xiaosi Chapter \thechapter\hspace{0.5em}{\boldmath #2}}}
+%\newcommand{\BiChapter}[2]
+%{
+%    \chapter{#1}
+%    \addcontentsline{toe}{chapter}{\bfseries Chapter \thechapter\hspace{0.5em} #2}
+%}
+
+\newcommand{\BiSection}[2]
+{   \section{#1}
+    \addcontentsline{toe}{section}{\protect\numberline{\csname thesection\endcsname}#2}
+}
+
+\newcommand{\BiSubsection}[2]
+{    \subsection{#1}
+    \addcontentsline{toe}{subsection}{\protect\numberline{\csname thesubsection\endcsname}#2}
+}
+
+\newcommand{\BiSubsubsection}[2]
+{    \subsubsection{#1}
+    \addcontentsline{toe}{subsubsection}{\protect\numberline{\csname thesubsubsection\endcsname}#2}
+}
+
+\newcommand{\BiAppendixChapter}[2] % 该附录命令适用于发表文章，简历等
+{\phantomsection
+\markboth{#1}{#1}%\markboth{\MakeUppercase{#1}}{\MakeUppercase{#1}}
+\addcontentsline{toc}{chapter}{\hei #1}
+\addcontentsline{toe}{chapter}{\bfseries \xiaosi #2}  \chapter*{#1}
+}
+
+\newcommand{\BiAppChapter}[2]    % 该附录命令适用于有章节的完整附录
+{\phantomsection  \chapter{#1}   %\markboth{\MakeUppercase{#1}}{\MakeUppercase{#1}} %为了winedt中project tree中toc正确显示，不要挪到下一行；
+%\addcontentsline{toc}{chapter}{\hei #1}
+ \addcontentsline{toe}{chapter}{\bfseries \xiaosi Appendix \thechapter~~#2}
+}
+
+\renewcommand{\thefigure}{\arabic{chapter}-\arabic{figure}}%使图编号为 7-1 的格式 %\protect{~}
+%\renewcommand\fnum@figure{\figurename\nobreakspace\thefigure\protect{~~~~~~~~~}} %
+
+\renewcommand{\thesubfigure}{\alph{subfigure})}%使子图编号为 a)的格式
+\renewcommand{\p@subfigure}{\thefigure ~~} %%使子图引用为 7-1 a) 的格式，母图编号和子图编号之间用~~加一个空格 
+%\renewcommand{\thesubfigure}{\alph{subfigure}}
+%\renewcommand{\p@subfigure}{\thefigure} %%使子图引用为 7-1a 的格式
+%\renewcommand{\@thesubfigure}{\thesubfigure)\hskip\subfiglabelskip}%使子图编号为 a)的格式
+
+\renewcommand{\thetable}{\arabic{chapter}-\arabic{table}}%%使表编号为 7-1 的格式
+\renewcommand{\theequation}{\arabic{chapter}-\arabic{equation}}%%使公式编号为 7-1 的格式
+
+%----------- 设置算法标题形式，由“Algorithm 2.1：算法标题” 改为“算法 2-1 算法标题”，并且定义算法的双标题命令；---------%
+
+\newcommand{\algoenname}{Algo.} %算法英文标题
+\newcommand{\listalgoenname}{List of Algorithms}
+\newfloatlist[chapter]{algoen}{aen}{\listalgoenname}{\algoenname}
+\newfixedcaption{\algoencaption}{algoen}
+\renewcommand{\thealgoen}{\thechapter-\arabic{algocf}}
+\renewcommand{\@cftmakeaentitle}{\chapter*{\listalgoenname\@mkboth{\bfseries\listalgoenname}{\bfseries\listalgoenname}}}
+
+\renewcommand{\algorithmcfname}{算法}
+\setlength\AlCapSkip{1.2ex}
+\SetAlgoSkip{1pt}
+\renewcommand{\algocf@captiontext}[2]{\wuhao#1\algocf@typo ~ \AlCapFnt{}#2} % text of caption
+\expandafter\ifx\csname algocf@within\endcsname\relax% if \algocf@within doesn't exist
+\renewcommand\thealgocf{\@arabic\c@algocf} % and the way it is printed
+\else%                                    else
+\renewcommand\thealgocf{\csname the\algocf@within\endcsname-\@arabic\c@algocf}
+\fi
+\renewcommand{\algocf@makecaption}[2]{%中英文双标题一定多于一行，因此去掉单行时的判断，并将\parbox中标题设置为居中
+  \addtolength{\hsize}{\algomargin}%
+  \sbox\@tempboxa{\algocf@captiontext{#1}{#2}}%
+    \hskip .5\algomargin%
+    \parbox[t]{\hsize}{\centering\algocf@captiontext{#1}{#2}}% 
+  \addtolength{\hsize}{-\algomargin}%
+}
+\newcommand{\AlgoBiCaption}[2]{%直接取出自定义的中英文标题条目加入到真正的\caption 中  
+   \caption[#1]{\protect\setlength{\baselineskip}{1.5em}#1 \protect \\ Algo. \thealgocf~~ #2} % \algoencaption{#2}   
+   \addcontentsline{aen}{algoen}{\protect\numberline{\thealgoen}{#2}}
+   }
+\renewcommand{\cftalgoendotsep}{1} %算法的英文目录里的点的间距
+
+\makeatother
+%定义 学科 学位
+\def \xuekeEngineering {Engineering}
+\def \xuekeScience {Science}
+\def \xuekeManagement {Management}
+\def \xuekeArts {Arts}
+
+\ifx \xueke \xuekeEngineering
+\newcommand{\cxueke}{工学}
+\newcommand{\exueke}{Engineering}
+\fi
+
+\ifx \xueke \xuekeScience
+\newcommand{\cxueke}{理学}
+\newcommand{\exueke}{Science}
+\fi
+
+\ifx \xueke \xuekeManagement
+\newcommand{\cxueke}{管理学}
+\newcommand{\exueke}{Management}
+\fi
+
+\ifx \xueke \xuekeArts
+\newcommand{\cxueke}{文学}
+\newcommand{\exueke}{Arts}
+\fi
+
+\newcommand{\cdash}{\mbox{—\!\!\!\!—\!\!\!\!—}}%输入中文破折号的命令
+\newcommand{\dif}{\mathrm{d}}%在数学模式中输入微分dx
+
+%%% Local Variables: 
+%%% mode: latex
+%%% TeX-master: "../main"
+%%% End: 

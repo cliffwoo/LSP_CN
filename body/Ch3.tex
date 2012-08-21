@@ -1,0 +1,654 @@
+\ifx\atempxetex\usewhat
+\XeTeXinputencoding "utf-8"
+\fi
+\defaultfont
+
+\chapter{缓冲输入输出}
+
+  让我们来回顾一下第一章中的块的概念，做为文件系统的抽象，它是I/O中最基本的概念-所有的磁盘操作都是基于块进行的。因此，当请求以块大小整数倍对齐地址时，I/O效率是最理想的。
+
+  操作效率随着系统调用次数的增多而急剧下降。例如，每次读一字节读1024次与一次读1024字节相比，显然后者效率更优。如果长度不是 block(块)的整数倍，即使每次以大于块的长度进行一系列的操作，其效率也不是最理想的。例如块的大小是1K,每次以1130字节的长度操作数据要比每次1024字节的速度慢。 
+
+\section{用户－缓冲I/O}
+  需要对普通文件执行许多轻量级I/O请求的程序通常使用用户缓冲I/O。用户缓冲I/O是在用户空间而不是在内核中完成的，它可以在程序中设定，也可以调用标准库透明地执行。正如第二章中讨论的，出于性能方面的考虑，内核通过延迟写操作，组合相邻I/O请求和预读等操作来缓冲数据。通过不同的方法，用户缓冲的主旨也是为了提高操作效率。
+
+以用户空间程序dd为例：
+\begin{lstlisting}
+  dd bs=1 count=2097152 if=/dev/zero of=pirate
+\end{lstlisting}
+
+因为参数bs=1,这个命令会进行2，097，152次操作(每次一字节)从文件/dev/zero(一个提供无限的0文件流的虚拟设备)中拷贝2M到文件 pirate中。也就是说，拷贝文件的过程会产生大约2百万次的读写操作——每次一个字节。
+
+现在考虑相同的2M字节拷贝，但是每次使用1024字节的块:
+\begin{lstlisting}
+  dd bs=1024 count=2048 if=/dev/zero of=pirate
+\end{lstlisting}
+
+该操作复制相同的2M 字节内容到相同的文件中，但是前一种方式执行的读写操作次数是该种方式的1024倍。正如你在表3－1中看到的，效率提高是很显著的。表中记录了用四个只在每次拷贝块大小上有区别的 dd命令所耗费的时间（用三种不同的测量）。实际时间是总消耗的时钟时间，用户时间是在用户空间中执行程序代码的时间，而系统时间是指进程在内核中执行系统调用所消耗的时间。
+
+表3-1.　块大小对性能的影响
+
+\begin{tabular}{cccc}
+Block size 　&　　Real time 　   &　User time 　  &  System time\\ \hline
+1 byte 　　　&　  18.707 seconds &  1.118 seconds &　17.549 seconds\\
+1,024 bytes　&  　0.025 seconds  &　0.002 seconds &　0.023 seconds\\
+1,130 bytes  &　　0.035 seconds  &　0.002 seconds &　0.027 second\\
+\end{tabular}
+
+
+
+使用1024字节块大小进行操作和1字节块相比，获得了巨大的性能提升。但是，这个表也显示用一个更大的块大小（这也意味着较少的系统调用），如果块大小不是磁盘块大小的整数倍，那么会导致效率变差。即使需要更少的调用，1130字节的请求导致产生不对齐的操作，因此比1024字节的请求效率更低。
+
+为了利用这个特性，需要预先知道可能的物理块大小。表中显式的结果表明块大小最可能是1024，1024的整数倍，或者是1024的约数。在本例中，/dev/zero的块大小实际上是4096B。
+
+\subsection{块大小}
+
+实际应用中，块大小一般是512字节， 1024字节， 2048字节， 或4096字节。如表3－1中显示，效率的大规模提升只是通过将每次操作的数据设置为块大小整数倍或约数获得的。这是因为内核和硬件之间是通过块交互的。所以，使用块大小或者一个能够恰好能放入一个块中的值来保证请求是块对齐的，可以防止无关的内核操作。
+
+通过用系统调用stat()(我们将在第七章讨论)或stat(1)可以轻松指定设备的块大小。 事实上，一般情况下我们不需要知道确切的块大小.
+
+为I/O操作选择一个大小的主要目标是不要选择像1130这样一个莫名其妙的值。Unix的历史上没有块长度是1130字节的，选择这样的块大小会在第一次操作后导致I/O不对齐。但是使用块大小的整数倍或约数就可以防止不对齐的请求。只要你选择的大小保持所有操作块对齐, 效率就会好。较大的整数倍只是减少了系统调用次数。
+
+然而,最简单的方法是用一个大小为标准块大小整数倍的缓冲区来执行I/O。 4096或8192字节的效果都不错.
+
+但问题是程序很少以块为单位进行操作.程序往往以区域,行,和单个字符为单位进行操作，而不是抽象的块。如前所述,为了改善这种情况,程序使用用户缓冲I/O. 当数据被写入时,它会被存储在程序地址空间的缓冲区中。当缓冲区规模达到一个给定的值（缓冲区大小时），整个缓冲区会在一次操作中被写出。同理，读操作一次读入缓冲区大小且块对齐的数据。当应用程序执行不对齐的读请求时，缓冲区一块一块的给出数据。最后，当缓冲区为空时，另一个大的块对齐的区域又被读入。如果缓冲区的大小设置得当，将会有很大的效率提升。
+
+你可以在程序中实现用户缓冲。事实上很多关键应用就是独立实现用户缓冲的。然而大部分程序使用标准I/O库(C标准库的一部分)，这个库可以提供健壮而且功能强大的用户缓冲方案。
+
+\subsection{标准I/O}
+
+C标准库中提供了标准I/O库(通常简单称作stdio)，其中实现了一个跨平台用户缓冲的解决方案。这个标准I/O库使用简单，而且功能强大。与其他编程语言(例如FORTAN)不同, 除了流控制和算数运算等基本支持外，C语言并没有对其他高级功能提供内嵌支持，当然也没有对I/O的内在支持。随着C语言的发展，用户们开发了一些提供核心功能的函数，例如字符串处理、数学函数库、日期时间库以及I/O库等。随着这些例程日渐成熟，在ANSI C委员会的许可下(C89)，这些函数最终被归入C语言标准库。虽然C95和C99都加入了一些新的接口，标准I/O库与1989年刚刚创建的时候相比改变不大。
+
+本章余下的部分讨论用户缓冲I/O。因为它属于文件输入输出，而且在C标准库中实现，因此打开、关闭、读写文件都是通过C标准库完成。一个程序究竟应该使用标准I/O或是自创的用户缓冲，还是直接使用系统调用，这些都需要设计者仔细权衡程序的需求和行为后才能决定。
+
+C标准通常会给每种实现保留一些的细节，而相关实现通常会加入一些扩展的特性。本章和本书的其它章节一样，主要讨论现代Linux上的接口和行为，这些接口和行为主要是用glibc实现的。在Linux偏离基本标准的时候，我们会予以指明。
+
+\subsection{文件指针}
+
+标准I/O例程并不直接操作文件描述符。取而代之的是它们用自己唯一的标志符，即大家熟知的文件指针(file pointer)。在C标准库里，文件指针映射到一个文件描述符。文件指针由FILE类型的指针表示，FILE类型定义在<stdio.h>中。
+
+在标准I/O中,一个打开的文件叫做"流"(stream)。 流可以被打开用来读(输入流), 写(输出流),或者二者兼有(输入输出流)。 
+
+\section{打开文件}
+
+文件通过fopen()打开以供读写操作:
+\begin{lstlisting}
+  #include <stdio.h>
+  FILE* fopen(const char * path, const char * mode);
+\end{lstlisting}
+
+这个函数根据指定的模式打开文件path,并为它关联一个新的流。
+
+\subsection{模式}
+
+参数模式mode描述以怎样的方式打开指定文件。 它可以是下述字符串之一:
+\begin{list}{}
+\item \textbf{r}\\
+   打开文件用来读取。流定位在文件的开始处。
+\item \textbf{r+}\\
+   打开文件用来读写。流定位在文件的开始处。
+\item \textbf{w}\\
+   打开文件用来写入,如果文件存在, 文件会被清空。 如果文件不存在,它会被创建。流定位在文件的开始处。
+\item \textbf{w+}\\
+   打开文件用来读写。如果文件存在,文件会被清空。如果文件不存在,它会被创建。流被设置在文件的开始。
+\item \textbf{a}\\
+   打开文件用来追加模式的写入。如果文件不存在它会被创建。流被设置在文件的末尾。所有的写入都会接在文件后。
+\item \textbf{a+}\\
+   打开文件用来追加模式的读写。如果文件不存在，它会被创建。流被设置在文件的末尾。 所有的写入都会接在文件后。
+\end{list}
+给定的模式可能还有字符b,但这个值在Linux下通常会被忽略。 一些操作系统用不同的方式对待文本和二进制文件, 并且b模式指示文件用二进制打开。Linux, 和所有的符合可移植性的操作系统,以相同的方式对待文本和二进制文件。
+
+成功时,fopen()返回一个合法的FILE指针。 失败时,它返回NULL,而且相应的设置errno。
+
+例如,下面的代码打开/etc/manifest以供读取,并将它与一个流关联:
+\begin{lstlisting}
+  FILE *stream;
+  stream = fopen ("/etc/manifest", "r");
+  if (!stream)
+    /* error */
+\end{lstlisting}
+
+
+\subsection{通过文件描述符打开文件}
+
+函数fdopen()将一个已经打开的文件描述符(fd)转成一个流:
+\begin{lstlisting}
+  #include <stdio.h>
+  FILE * fdopen (int fd, const char *mode);
+\end{lstlisting}
+
+fdopen()的可能模式和fopen()一样,而且必许和原来打开文件描述符的模式匹配。可以指定模式w和w+,但是它们不会截断文件。流的位置设置在文件描述符指向的文件位置。 一旦文件描述符被转换为一个流, 则不应该直接在该文件描述符上进行I/O（尽管这么做是合法的）。需要注意的是文件描述符没有被复制,而只是关联了一个新的流。关闭流也会关闭相应的文件描述符。成功时,fdoepn()返回一个合法的文件指针;失败时,返回NULL。 例如, 下面的代码通过open()系统调用打开/home/kidd/map.txt,然后用已有的文件描述符创建一个关联的流:
+\begin{lstlisting}
+  FILE *stream;
+  int fd;
+  fd = open ("/home/kidd/map.txt", O_RDONLY);
+  if (fd == −1)
+    /* error */
+  stream = fdopen (fd, "r");
+  if (!stream)
+   /* error */
+\end{lstlisting}
+
+
+\section{关闭流}
+
+fclose()函数关闭一个给定的流：
+\begin{lstlisting}
+  #include <stdio.h>
+  int fclose (FILE *stream);
+\end{lstlisting}
+
+
+所有被缓冲但还没有被写出的数据会被先写出。成功时，fclose()返回0。失败时返回EOF并且相应的设置errno。
+
+\subsection{关闭所有的流}
+
+fcloseall()函数关闭所有的和当前进程相关联的流，包括标准输入，标准输出，标准错误：
+\begin{lstlisting}
+  #define _GNU_SOURCE
+  #include <stdio.h>
+  int fcloseall (void);
+\end{lstlisting}
+
+关闭之前，所有的的流会被写出。这个函数始终返回0；该函数是Linux所特有的。 
+
+\section{从流中读取数据}
+
+C标准库实现了多种从流中读取数据的方法。这部分会考察三种最常用的：单个字节的读取，单行的读取，和二进制数据读取。为了从流中读数据，流必须以恰当的方式打开；也就是说，任何除了w或a的模式都可以。
+
+\subsection{单字节读取}
+
+通常，理想的输入输出模式是每次简单地读取一个字符。函数fgetc()可以用来从流中读取单个字符：
+\begin{lstlisting}
+  #include <stdio.h>
+  int fgetc (FILE *stream);
+\end{lstlisting}
+
+这个函数从流中读取下一个字符并把该无符号字符强转为int返回。强转是为了有足够的范围来表示文件结尾符和错误:在这种情况下EOF会被返回。fgetc()的返回值必须以int型保存。把返回值保存为char类型中是一个很常见但很危险的错误。下面的例子从流中读取单个字符，检查错误，然后以字符方式打印结果：
+\begin{lstlisting}
+  int c;
+  c = fgetc (stream);
+  if (c == EOF)
+    /* error */
+  else
+    printf ("c=%c\n", (char) c);
+\end{lstlisting}
+
+stream指向的流必须以可读模式打开。
+
+\subsection{把字符回放入流中}
+
+标准输入输出提供了一个将字符放回流中的函数。这个函数允许你“偷窥”流，如果你不需要该字符的话，可以把它放回。
+\begin{lstlisting}
+  #include <stdio.h>
+  int ungetc (int c, FILE *stream);
+\end{lstlisting}
+
+每次调用把c强转成一个无符号字符并放回流中。成功时，返回c;失败时返回EOF。随后读取流会返回c。如果多个字符被放入流中，它们会以倒序的方式返回－就是说，最后推入的先返回。POSIX 指出，在中间没有读入请求时只能保证一次放回成功。然而有些实现只允许一次放回。只要有足够的内存，Linux允许无限次数的放回。一次放回当然总会成功。
+
+如果你在调用ungetc()之后，但在执行下一个读入请求之前执行了一次定位函数(见本章后半部分'定位流')的调用，会导致所有推回的字符被丢弃。在一个进程的多个线程中确实是这样的，因为所有的线程共享一个缓冲区。
+
+\subsection{按行的读取}
+
+函数fgets()从一个给定的流中读取一个字符串:
+\begin{lstlisting}
+  #include <stdio.h>
+  char * fgets (char *str, int size, FILE *stream);
+\end{lstlisting}
+
+这个函数从流中读取 size－1 个字节的数据，并把数据存入str中。 当所有字节读入时，空字符被存入字符串末尾。当读到EOF或换行符时读入结束。如果读到了一个换行符，'{\textbackslash}n'被存入str。
+
+成功时返回str；失败时，返回NULL。例如：
+\begin{lstlisting}
+  char buf[LINE_MAX];
+  if (!fgets (buf, LINE_MAX, stream))
+    /* error */
+\end{lstlisting}
+
+POSIX 在<limits.h>中定义了宏LINE\_MAX：它是POSIX行控制接口能够处理的输入行的最大长度。linux的C函数库没有提供这样的限制(行可以是任意长度),但是不能和宏LINE\_MAX交互。可移植程序可以用LINE\_MAX来保证安全；在linux系统中，该值被设置的相对较高。针对linux的程序无需担心行大小的限制。
+
+\subsection{读取任意字符串}
+
+fgets()基于行的读取通常是很有用的。但很多时候它又很麻烦。有时候开发者想用一个分隔符而不是换行符。有时候开发者根本不需要一个分隔符－而且极少数情况下开发者希望分隔符留在缓冲区。从历史经验来看，在返回的缓冲区中存入换行符很少是正确的。
+
+用fgetc()写一个fgets()并不难。例如，下面的代码片段从流中读取n-1个字节到str中，然后加上一个'\textbackslash0'：
+\begin{lstlisting}
+  char *s; 
+  int c;
+  s = str;
+  
+  while (--n > 0 && (c = fgetc (stream)) != EOF)
+    *s++ = c;
+    *s = '\0';
+\end{lstlisting}
+
+这段程序可以扩展为在任意指定的分隔符 d 处停止(在本例中d不能是空字符)：
+\begin{lstlisting}
+  char *s;
+  int c = 0;
+  s = str;
+  
+  while (--n > 0 && (c = fgetc (stream)) != EOF && (*s++ = c) != d)
+    ;
+  if (c == d)
+    *--s = '\0';
+  else
+    *s = '\0';
+\end{lstlisting}
+
+除了在缓冲区中存入换行符,将d设置为'{\textbackslash}n'可以提供和fgets()类似的功能，。
+
+根据fgets()的实现，这个实现方式可能要慢些，因为它重复调用了很多次fgetc()。 然而，这和我们一开始的dd例子不同。虽然这段代码出现了过多的函数调用，但它没有进行过多的系统调用和dd程序中bs＝1引起的不对齐I/O负担,相对来讲后者是更大的问题。
+
+\subsection{读取二进制文件}
+
+一些应用程序不只是读取字符。有时候开发者想读写复杂的二进制数据，例如C中的结构。因此，标准输入输出库提供了函数fread():
+\begin{lstlisting}
+  #include <stdio.h>
+  size_t fread (void *buf, size_t size, size_t nr, FILE *stream);
+\end{lstlisting}
+
+调用fread()会从输入流中读取nr个数据，每个数据有size个字节，并将数据放入到buf所指向的缓冲区。文件指针向前移动读出数据的长度。
+
+读入元素的个数（不是读入字节的个数!）被返回。这个函通过返回一个比nr小的数表明读取失败或文件结束。不幸的是，在没有使用ferror()和feof()（见后面"错误和文件结束"）的情况下，不可能知道发生了这两种情况的哪一个。
+
+因为变量大小，对齐，填充，字节序的不同，一个程序写的二进制文件，对另一个程序可能是不可读的，即使是该程序在其他架构上的版本也可能是无法读取的。
+
+fread()最简单的例子是从给定流中读取一个线性大小的元素：
+\begin{lstlisting}
+  char buf[64];
+  size_t nr;
+  
+  nr = fread (buf, sizeof(buf), 1, stream);
+  if (nr == 0)
+    /* error */
+\end{lstlisting}
+
+当我们学习和fread()相对应的fwrite()时，我们会看一些更复杂的例子。 
+
+\section{向流中写数据}
+
+和读取相同，C标准库定义了许多用来将数据写入流中的函数。在这一部分我们会学习三个最常用的写数据的方法：单个字节的写入，字符串写入，和二进制写入。这些不同的写入方法对于缓冲I/O都是适用的。为了向流中写数据，流必须以恰当的输出流的模式打开；就是说，除了r的所有合法的模式。
+
+\subsection{对齐的讨论}
+所有的机器设计都有数据对齐的要求。程序员倾向于把内存想成一个简单的字节数组。但是处理器并不以字符大小对内存进行读写。相反，处理器以特定的粒度(例如2，4，8或16字节)来访问内存。因为每个处理的地址空间都从0地址开始，进程必须从一个特定粒度的整数倍开始读取。
+因此，C变量的存储和访问都要是地址对齐的。总的来说，变量是自动对齐的，这指的是和C数据类型大小相关的对齐。例如，一个32位整数以4个字节对齐。用另一种说法就是一个int需要被存储在能被4整除的内存地址中。
+访问不对齐的数据在不同的体系结构上有不同程度的性能损失。一些处理器能够访问不对齐的数据，但是会有一个很大性能损失。有些的处理器根本不能够访问非对齐的数据，而且企图这么做会导致硬件异常。更糟的是，一些处理器为了强制地址对齐会丢弃了低位的数据，从而导致不可预料的行为。
+通常，编译器自动对齐数据，而且对齐是程序员不可见的。在处理结构体，手动执行内存管理，向磁盘存储二进制数据，和进行网络通信时，对齐都非常重要。因此系统程序员应当熟练掌握这些方法。
+第八章会更深入的讨论对齐的内容。
+
+
+\subsection{写入单个字符}
+
+与fgetc()相对应的函数是fputc():
+\begin{lstlisting}
+  #include <stdio.h>
+  int fputc (int c, FILE *stream);
+\end{lstlisting}
+
+fputc()函数将c表示的字节(强转为了一个无符号字符)写入stream指向的流中。成功完成时，函数返回c。否则返回EOF，并且相应的设置errno。
+
+用法很简单
+\begin{lstlisting}
+  if (fputc ('p', stream) == EOF)
+    /* error */
+\end{lstlisting}
+
+这个例子将p写入流中，这个流必须打开用于写入。
+
+\subsection{写入字符串}
+
+函数fputs()用来往给定的流中写入一个完整的字符串：
+\begin{lstlisting}
+  #include <stdio.h>
+  int fputs (const char *str, FILE *stream);
+\end{lstlisting}
+
+fputs()的调用将str指向的字符串的所有非分隔符部分写入stream指向的流中。成功时，fputs()返回一个非负整数。失败时，返回EOF。
+
+下面的例子以追加模式打开文件用来写入，将给定的字符串写入相关的流中，然后关闭流：
+\begin{lstlisting}
+  stream = fopen ("journal.txt", "a");
+  if (!stream)
+    /* error */
+  if (fputs ("The ship is made of wood.\n", stream) == EOF)
+    /* error */
+  if (fclose (stream) == EOF)
+    /* error */
+\end{lstlisting}
+
+
+\subsection{写入二进制数据}
+
+如果程序需要写入二进制数据，则单独字符和行并不能满足需求。为了直接存储二进制数据例如C变量，标准I/O提供了fwrite()函数:
+\begin{lstlisting}
+  #include <stdio.h>
+  size_t fwrite (void *buf,
+  size_t size,
+  size_t nr,
+  FILE *stream);
+\end{lstlisting}
+
+调用fwrite()会把buf指向的nr个元素写入到stream中，每个元素长为size。文件指针会向前移动写入的所有字节的长度。
+
+成功时，会返回写入元素的个数(不是字节的个数!)。返回小于nr的数表明发生了错误。
+
+\subsection{缓冲I/O示例程序}
+
+现在让我们看一个例子－实际上是一个完整的程序－它综合了本章之前涉及到的许多函数。这个程序首先定义了一个结构pirate，然后声明了两个这个类型的变量。程序初始化了其中的一个变量，随后通过一个指向文件data的输出流将它写入磁盘中。通过一个不同的流，程序直接从data中读取数据存储到pirate结构的另一个实例中。最后程序把这个结构的内容输出到标准输出:
+\begin{lstlisting}
+  #include <stdio.h>
+  int main (void)
+  {
+    FILE *in, *out;
+    struct pirate
+    {
+       char name[100]; /* real name */
+       unsigned long booty; /* in pounds sterling */
+       unsigned int beard_len; /* in inches */
+    } p, blackbeard = { "Edward Teach", 950, 48 };
+    
+    out = fopen ("data", "w");
+    if (!out)
+    {
+       perror ("fopen");
+       return 1;
+    }
+    if (!fwrite (&blackbeard, sizeof (struct pirate), 1, out))
+    {
+       perror ("fwrite");
+       return 1;
+    }
+    if (fclose (out))
+    {
+       perror ("fclose");
+       return 1;
+    }
+    in = fopen ("data", "r");
+    if (!in)
+    {
+       perror ("fopen");
+       return 1;
+    }
+    if (!fread (&p, sizeof (struct pirate), 1, in))
+    {
+       perror ("fread");
+       return 1;
+    }
+    if (fclose (in))
+    {
+       perror ("fclose");
+       return 1;
+    }
+    printf ("name=\"%s\" booty=%lu beard_len=%u\n",
+       p.name, p.booty, p.beard_len);
+    return 0;
+  }
+\end{lstlisting}
+
+
+输出结果当然是原来的值:
+\begin{verbatim}
+  name="Edward Teach" booty=950 beard_len=48
+\end{verbatim}
+
+我们需要牢记的是，因为变量长度、对齐等等的不同，一个程序写入的二进制数据对另外一个程序可能是不可读的。就是说，不同的程序－即使是不同机器上的同一个程序－可能不能正确地读取fwrite()写入的数据。在我们的例子中，可以想象一下如果无符号长整型的大小改变了，或者填充的数量改变了，将会是什么情况。这些东西只能在拥有特定ABI的特定机型上才能保证相同。 
+
+\section{定位流}
+
+通常，控制当前流的位置是很有用的。可能程序正在读取一个复杂的基于记录的文件，而且需要跳转。必要的时候，流可能需要将设置为文件的初始位置。不管什么情况，标准I/O提供了一系列功能等价于系统调用lseek()的函数(第二章中讨论过)。fseek()函数，标准I/O最常用的定位函数，操纵流指向文件中由offset和whence指定的位置:
+\begin{lstlisting}
+  #include <stdio.h>
+  int fseek (FILE *stream, long offset, int whence);
+\end{lstlisting}
+
+如果whence被设置为SEEK\_SET,文件的位置被设置到offset处。如果whence被设置为SEEK\_CUR,文件位置被设置到当前位置加上offset.如果whence被设置为SEEK\_END,文件位置被设置到文件末尾加上offset。
+
+成功时,fseek()返回0，清空文件结束标志，并且取消ungetc()操作。错误时，它返回－1，并且相应的设置errno。最常见的错误有非法流(EBADF)和非法whence参数(EINVAL)。另外，标准I/O还提供了fsetpos()函数:
+\begin{lstlisting}
+  #include <stdio.h>
+  int fsetpos (FILE *stream, fpos_t *pos);
+\end{lstlisting}
+
+这个函数将流的位置设置到pos处。它和将whence设置为SEEK\_SET时的fseek()功能一致。成功时它返回0。否则，返回-1,并且相应地设置errno的值。这个函数(和将要学到的对应的fgetpos()函数)只在其它(非UNIX)能够用复杂数据类型表示流的位置的平台上提供。在这些平台上，这个函数是唯一能够将流位置设置为任意值的方法，因为Ｃ的长整型可能不够大。linux的程序一般不使用这个接口，除非它们希望能够被移植到所有的平台上。
+
+标准I/O也提供了rewind()函数，下面是一个片段：
+\begin{lstlisting}
+  #include <stdio.h>
+  void rewind (FILE *stream);、
+\end{lstlisting}
+
+该调用：
+\begin{lstlisting}
+  rewind(stream);
+\end{lstlisting}
+
+将位置重置到流的初始位置。它等价于:
+\begin{lstlisting}
+  fseek (stream, 0, SEEK_SET);
+\end{lstlisting}
+
+此外，它还清空错误标记。注意rewind()没有返回值，因此不能够直接提供错误信息。调用函数如果希望获取错误，需要在调用之前清空errno，并且检查这个变量在调用之后是否非零。例如：
+\begin{lstlisting}
+  errno = 0;
+  rewind (stream);
+  if (errno)
+    /* error */
+\end{lstlisting}
+
+
+\subsection{获得当前流位置}
+
+和lseek()不同，fseek()不返回更新后的位置。一个单独的接口提供了这个功能。ftell()函数返回当前流的位置:
+\begin{lstlisting}
+  #include <stdio.h>
+  long ftell (FILE *stream);
+\end{lstlisting}
+
+错误时，它返回-1，并且相应的设置errno。选择性的，标准输入输出提供了fgetpos()函数：
+\begin{lstlisting}
+  #include <stdioh.h>
+  int fgetpos (FILE *stream, fpos_t *pos);
+\end{lstlisting}
+
+成功时，fgetpos()返回0，并且将当前流的位置设置为pos。失败时，返回-1,并且相应的设置errno。和fsetpos()一样，fgetpos()只在有复杂文件位置类型的非linux平台上提供。
+
+\section{清洗一个流}
+
+标准I/O库提供了一个用来将用户缓冲区写入内核，并且保证所有的数据都通过write()写出的函数。fflush()函数提供了这一功能：
+\begin{lstlisting}
+  #include <stdio.h>
+  int fflush (FILE *stream);
+\end{lstlisting}
+
+调用该函数时，stream指向的流中的所有未写入的数据会被清洗(flush)到内核中。如果stream是空的（NULL ），所有进程打开的流会被清洗掉。成功时fflush()返回0。失败时，它返回EOF，并且相应的设置errno。
+
+为了理解fflush()函数的作用，你必须理解C函数库维持的缓冲区和内核自己拥有的缓冲区的区别。本章提到的所有调用的缓冲区都是通过 C函数库来维护的，它们保留在用户空间中，而不是内核空间。这就是效率提高的原因－程序保留在用户空间中，并且运行用户的代码，不执行系统调用。只有当磁盘或其它介质必须被访问时系统调用才会被执行。 fflush()只是把用户缓冲的数据写入到内核缓冲区。效果和没有用户缓冲区一样，而且write()是被直接调用的。这并不保证数据能够写入物理介质－如果需要的话，使用fsync（）这一类函数(见第二章同时I/O)。更多的情况是在调用fflush()后, 立即调用fsync(): 就是说先保证用户缓冲区被写入到内核，然后保证内核缓冲区被写入到磁盘。
+
+\section{错误和文件结束}
+
+一些标准I/O接口，例如fread(), 向调用者传递失败信息的能力很差，因为它们没有提供区分错误和EOF的机制。在一些场合中调用这些函数时，需要区分给定的流出现了错误还是到达了文件结尾。标准I/O为此提供了两个函数。函数ferror()测试是否在流上设置了错误标志：
+\begin{lstlisting}
+  #include <stdio.h>
+  int ferror (FILE *stream);
+\end{lstlisting}
+
+错误标志由其它响应错误的标准I/O函数设置。如果标志被设置，函数返回非零值，否则返回0。函数feof()测试文件结尾标志是否被设置：
+\begin{lstlisting}
+  #include <stdio.h>
+  int feof (FILE *stream);
+\end{lstlisting}
+
+当到达文件的结尾时，EOF标志会被其它标准I/O函数设置。如果标志被设置了，函数返回非零值，否则返回0。 clearerr()函数为流清空错误和文件结尾标志：
+\begin{lstlisting}
+  #include <stdio.h>
+  void clearerr (FILE *stream);
+\end{lstlisting}
+
+它没有返回值，而且不会失败(没有方法知道是否提供了一个非法的流)。只有在检查error和EOF标志之后，你才可以调用clearerr()，因为这些操作是不可恢复的。例如：
+\begin{lstlisting}
+  /* 'f' is a valid stream */
+  if (ferror (f))
+    printf ("Error on f!\n"); 
+  if (feof (f))
+    printf ("EOF on f!\n");
+  clearerr (f);
+\end{lstlisting}
+
+
+\section{获得关联的文件描述符}
+
+有时候，从流中获得文件描述符是很方便的。例如，当一个关联的标准I/O函数不存在时，可以通过流的文件描述符对一个流执行系统调用。为了获得流的文件描述符，可以使用fileno():
+\begin{lstlisting}
+  #include <stdio.h>
+  int fileno (FILE *stream);
+\end{lstlisting}
+
+成功时，fileno()返回和流相关联的文件描述符。失败时，它返回－1。只有当给定的流非法时才可能发生这种清况，这时候函数会将errno设置为EBADF。通常不建议混合使用标准输入输出调用和系统调用。使用fileno()时程序员需要确保操作非常谨慎。尤其需要注意的是，最好在执行获取文件描述符之前对流进行冲洗(flush)。记住，最好永远不要混合使用I/O操作。
+
+\section{控制缓冲}
+
+标准I/O实现了三种用户缓冲，而且为开发者提供了一个用来控制缓冲区大小和类型的接口。不同的用户缓冲提供不同功能，并适用于不同的场合。下面是一些选项：
+\begin{list}{}
+\item \textbf{不缓冲}
+
+没有执行用户缓冲。数据直接提交到内核。因为这和用户缓冲对立，这个选项通常不用。标准错误默认是不缓冲的。
+
+\item \textbf{行缓冲}
+
+缓冲以行为单位执行。每当遇到换行符，缓冲区被提交到内核。行缓冲对输出到屏幕的流有用。因此，它是终端的默认缓冲方式(标准输出默认为行缓冲)。
+
+\item \textbf{块缓冲}
+
+缓冲以块为单位执行。这是本章一开始讨论的缓冲类型，而且它适用于文件。默认的所有和文件相关的流都是块缓冲的。标准I/O称块缓冲为全缓冲。
+\end{list}
+
+
+
+大部分情况下，默认的缓冲类型是最高效的。然而，标准I/O确实提供了一个用来控制使用的缓冲类型的函数：
+\begin{lstlisting}
+  #include <stdio.h>
+  int setvbuf (FILE *stream, char *buf, int mode, size_t size);
+\end{lstlisting}
+
+setbuf()函数设置流的缓冲类型模式，模式必须是以下的一种：
+
+
+\begin{eqlist*}
+\item[\textbf{\_IONBF}] 无缓冲
+\item[\textbf{\_IOLBF}] 行缓冲
+\item[\textbf{\_IOFBF}] 块缓冲
+\end{eqlist*}
+
+
+
+
+除了\_IONBF情况下buf和size被忽略了，buf可以指向一个size字节大小的缓冲空间，标准I/O会用它来执行对给定流的缓冲。如果buf为空， 缓冲区则由glibc自动分配。
+
+setvbuf（）函数必须在打开流后，但在执行任何操作之前被调用。 成功时它返回0，出错则返回一个非零值。
+
+在流关闭时供其使用的缓冲区必须存在。一个常见的错误是把缓冲区定义成作用域中的自动变量，并且作用域结束之前没有关闭流。特别应该注意的是不要使用一个main()函数内的缓冲区，且没有显式地关闭流。例如，以下代码中有一个错误：
+\begin{lstlisting}
+  #include <stdio.h>
+  int main (void)
+  {
+    char buf[BUFSIZ];
+    /* set stdin to block-buffered with a BUFSIZ buffer */
+    setvbuf (stdout, buf, _IOFBF, BUFSIZ);
+    printf ("Arrr!\n");
+    return 0;
+  }
+\end{lstlisting}
+
+
+这个错误可以通过在离开作用域之前显式地关闭流或将流作为全局变量来修正。
+
+总的来说，开发者不用操心在流上的缓冲。除了标准错误外，终端是行缓冲的，而且这样就够了。文件是块缓冲的，这样也就可以了。默认的块缓冲区大小是在<stdio.h>中定义的BUFSIZ，而且通常情况下这是最优的选择(一个标准块大小的数个整数倍)。 
+
+\section{线程安全}
+
+线程就是在同一个进程中执行的多个实例。线程的定义是共享同一地址空间的多个进程。如果不采取数据同步措施或将数据线程私有化，线程可以任何时间修改共享数据。支持线程的操作系统提供加锁机制（保证相互排斥的程序结构）来保证线程不会互相干扰。标准I/O使用这些机制。而且，这些机制通常还不能满足需求。例如，有时候你想给一组调用加锁，将临界区（一段独立运行的代码）的范围从一个I/O操作扩大到几个。而有些情况下，你可能想取消锁机制来提高效率。本节中，我们会讨论怎样做到这两点。\footnote[1]{通常，取消锁会导致各种各样的问题。但一些程序可能显式地将所有的I/O操作都由一个线程来完成。在这种情况下，没有必要增加锁的开销。}
+
+标准I/O的函数本质上是线程安全的。在内部实现中，设置了一把锁，一个锁计数器，和为每个打开的流创建的所有者线程。一个线程要想执行任何I/O请求，必须首先获得锁而且成为所有者线程。两个或多个运行在同一流上的线程不能交错地执行I/O操作，因此，在单独一个函数调用的上下文中，标准I/O操作是原子的。
+
+当然在实际应用中，许多应用程序需要比单独的函数调用更强的原子性。例如，如果多个线程正在执行写入请求，应用程序可能希望这些读写请求没有间断地完成。为了达到这个目的，标准I/O为独立操纵和流关联的锁提供了一系列的函数。
+
+
+\subsection{手动文件加锁}
+
+函数flockfile()会等待流被解锁，然后获得锁，增加锁计数，成为流的所有者线程，然后返回:
+\begin{lstlisting}
+  #include <stdio.h>
+  void flockfile (FILE *stream);
+\end{lstlisting}
+
+函数funlockfile() 减少与流相关的锁计数：
+\begin{lstlisting}
+  #include <stdio.h>
+  void funlockfile (FILE *stream);
+\end{lstlisting}
+
+如果锁计数器达到了0，当前的线程放弃流的所有权，另一个线程现在能够获得锁。这些调用可以嵌套。就是说，一个线程可以执行多个flockfile()调用，而流在程序执行相同数量的funlockfile()调用前不会解锁。 ftrylockfile()是flockfile()的非堵塞版本:
+\begin{lstlisting}
+  #include <stdio.h>
+  int ftrylockfile (FILE *stream);
+\end{lstlisting}
+
+如果流当前加了锁，ftrylockfile()不做任何处理，并立即返回一个非零值。如果流当前没有加锁，它获得锁，增加锁计数，成为流的所有者线程，并且返回0。让我们看一个例子：
+\begin{lstlisting}
+  flockfile (stream);
+  fputs ("List of treasure:\n", stream);
+  fputs (" (1) 500 gold coins\n", stream);
+  fputs (" (2) Wonderfully ornate dishware\n", stream);
+  funlockfile (stream);
+\end{lstlisting}
+
+尽管单独的fputs()操作不会产生竞争－例如，我们永远不会有内容打断"List oftreasure"的输出，另一个线程可能会夹杂在当前线程的两个fputs()语句之间。理想情况下，一个应用程序的多个线程不应该向同一个流提交 I/O操作。然而如果你的程序不需要这么做，并且你需要一个比单独函数调用更大的原子操作区域，flockfile()和它的相关函数可以解决这个问题。
+
+\subsection{不加锁流操作}
+
+手动给流加锁还有另外一个原因。只有应用开发者才能提供更精细和更准确的控制锁，可以将加锁的代价降到最小，并提高执行效率。为此，Linux提供了一系列的函数，类似于通常的标准I/O接口，但是不执行任何锁操作。他们实际上是不加锁的标准I/O：
+\begin{lstlisting}
+  #define _GNU_SOURCE
+  #include <stdio.h>
+  int fgetc_unlocked (FILE *stream);
+  char *fgets_unlocked (char *str, int size, FILE *stream);
+  size_t fread_unlocked (void *buf, size_t size, size_t nr,FILE *stream);
+  int fputc_unlocked (int c, FILE *stream);
+  int fputs_unlocked (const char *str, FILE *stream);
+  size_t fwrite_unlocked (void *buf, size_t size, size_t nr,FILE *stream);
+  int fflush_unlocked (FILE *stream);
+  int feof_unlocked (FILE *stream);
+  int ferror_unlocked (FILE *stream);
+  int fileno_unlocked (FILE *stream);
+  void clearerr_unlocked (FILE *stream);
+\end{lstlisting}
+
+除了它们不检查或获得指定流上的锁，这些函数与相对的加锁函数执行相同操作。如果需要锁机制，程序员有责任保证手工获得并且释放锁。尽管POSIX定义了一些不加锁的标准I/O函数，但上面的函数没有一个是POSIX定义的。它们都是Linux特有的，许多其他的Unix系统部分的支持以上提到的函数。 
+
+\section{对标准I/O的批评}
+
+尽管标准I/O广泛使用，一些专家还是指出了它的一些缺点。一些函数，例如fgets(), 有时候不能够满足要求。其它函数，例如gets（），太不安全，就差被逐出标准了。
+
+对标准I/O最大的抱怨是双副本的性能影响。当读取数据时，标准I/O对内核执行read()系统调用，从内核中复制数据到标准I/O缓冲区。然后当一个程序通过标准I/O执行一个读请求时－例如，用fgetc(）－数据又被复制，这一次从标准I/O的缓冲区到指定的缓冲区。写入请求时用相反的方式运行：数据先从给定的缓冲空间复制到标准I/O缓冲区，然后又从标准I/O缓冲区通过write()写入内核。
+
+一个解决的办法是，通过让每个读请求返回一个指向标准I/O缓冲区的指针来避免双复本。数据可以被直接从标准I/O缓冲区中读取，不需要多余的复制。当程序确实需要自己本地缓冲区的数据时－可能向其中写数据－总可以手动地执行复制。这个实现需要提供了一个"释放"的接口，允许程序当它们完成缓冲区的一块读取时发出信号。
+
+写操作会更复杂些，但是仍然能够被避免双复本。当执行一个写入请求时，这个实现会记录指针位置，最终当准备好将数据冲洗到内核时再写出数据。这些可以通过分散-聚集I/O(scatter-gather I/O)中的writev()函数来实现，完成这个功能只需要一个系统调用。(我们会在下一章讨论散布-聚集I/O)。
+
+现在有一些高度优化的用户缓冲库，它们用了类似于我们刚刚讨论的方法来解决双复本问题。一些开发者会选择实现他们自己的用户缓冲方案。但是尽管有不同的选择，标准I/O仍然很流行。
+
+\section{结论}
+
+标准I/O是C标准库提供的一个用户缓冲库。除掉一些不完善的地方，它是一个很强大而且非常流行的解决方案。许多C程序员，实际上除了标准I/O，对其他的几乎一无所知。当然，对于终端I/O，行缓冲是最理想的，标准I/O是它的唯一的解决方法。又有谁直接调用write（）向标准输出写过数据呢？
+
+标准I/O（仅从这点来看，也包括用户缓冲）适用于下列情况：
+
+\begin{itemize}
+\item 你可能需要执行许多系统调用，而你希望通过合并这些调用从而尽量减少开销。
+\item 在性能至关重要的场合，你希望保证所有的I/O以块大小进行，并且能保持块对齐。
+\item 你的访问模式是基于字符或行的，你希望通过一个接口来实现这种访问，但又不想进行太多的系统调用。
+\item 相比底层的Linux系统调用，你更喜欢高层次的接口。
+\end{itemize}
+
+然而最大的灵活在于你能够直接的使用Linux系统调用。下一章，我们将学习高级形式的I/O和相关的系统调用。 

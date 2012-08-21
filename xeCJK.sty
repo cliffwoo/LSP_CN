@@ -1,0 +1,630 @@
+% -*- coding: utf-8 -*-
+% This is the file xeCJK.sty of the xeCJK package
+%   for typesetting Chinese/Japanese/Korean with XeLaTeX
+%
+% created by Wenchang Sun <sunwch@hotmail.com>
+%
+% Version 2.1.1 (17-July-2008)
+%
+% Copyright (C) Wenchang Sun <sunwch@hotmail.com>
+%
+% This file may be distributed and/or modified under the
+% conditions of the LaTeX Project Public License, either version 1.3
+% of this license or (at your option) any later version.
+% The latest version of this license is in
+%   http://www.latex-project.org/lppl.txt
+% and version 1.3 or later is part of all distributions of LaTeX
+% version 2005/12/01 or later.
+%
+% 2008/04/23:  \addto@hook\UL@hook{\CJKnospaces}
+% 2008/04/19:  Change the CJK range:
+%
+\RequirePackage{ifxetex}
+\RequireXeTeX
+\def\fileversion{2.1.1}
+\def\filedate{2008/07/17}
+\ProvidesPackage{xeCJK}[\filedate\space\fileversion]
+
+\XeTeXdefaultencoding "UTF-8"
+\XeTeXinputencoding "UTF-8"
+
+\RequirePackage{fontspec}
+
+
+\newif\ifxeCJK@SlantFont@
+\xeCJK@SlantFont@false
+
+\newif\ifxeCJK@BoldFont@
+\xeCJK@BoldFont@false
+
+\newif\ifxeCJK@num
+\xeCJK@numfalse
+
+\newif\ifxeCJK@addspaces
+\xeCJK@addspacesfalse
+
+\newif\ifxeCJK@nospaces
+\xeCJK@nospacesfalse
+
+\DeclareOption{boldfont}{\xeCJK@BoldFont@true}
+\DeclareOption{BoldFont}{\ExecuteOptions{boldfont}}
+\DeclareOption{slantfont}{\xeCJK@SlantFont@true}
+\DeclareOption{SlantFont}{\ExecuteOptions{slantfont}}
+\DeclareOption{CJKnumber}{\xeCJK@numtrue}
+\DeclareOption{CJKaddspaces}{\xeCJK@addspacestrue}
+\DeclareOption{CJKnormalspaces}{\xeCJK@addspacesfalse}
+\DeclareOption{CJKnospaces}{\xeCJK@nospacestrue}
+
+\ProcessOptions\relax
+
+\endlinechar \m@ne
+
+% set XeTeXcharclass for CJK characters:
+%
+%  1: normal char
+%  2: prepunct
+%  3: postpunct
+\XeTeXinterchartokenstate=1\relax
+
+\def\xeCJKsetcharclass#1#2#3{
+  \@tempcnta=#1
+  \loop
+    \XeTeXcharclass \@tempcnta #3\relax
+    \advance\@tempcnta 1\relax
+    \ifnum\the\@tempcnta<#2 \repeat}
+
+%
+% For CJK characters
+\xeCJKsetcharclass{"3000}{"FFFF}{1}
+
+\def\xeCJK@prePunct#1#2{\xeCJK@setPunct{2}{#1}{#2}}
+\def\xeCJK@postPunct#1#2{\xeCJK@setPunct{3}{#1}{#2}}
+
+\def\xeCJK@setPunct#1#2#3{
+  \def\xeCJK@class{#1}
+  \@tempcnta "#2\relax
+  \multiply\@tempcnta 256\relax
+  \xeCJK@setPunct@#3,,}
+
+\def\xeCJK@setPunct@#1,{
+  \edef\xeCJK@temp{#1}%
+  \ifx\xeCJK@temp\@empty
+  \else
+     \@tempcntb "#1\relax
+     \advance\@tempcntb\@tempcnta\relax
+     \XeTeXcharclass \@tempcntb=\xeCJK@class\relax
+     \def\xeCJK@temp{\xeCJK@setPunct@}
+  \fi
+  \xeCJK@temp}
+
+\xeCJK@prePunct{20}{18,1C}
+\xeCJK@postPunct{20}{19,1D,14,26}
+\xeCJK@prePunct{30}{08,0A,0C,0E,10,12,14,16,18,1A,1D,1F,36}
+
+\xeCJK@postPunct{30}{01,02,05,06,09,0B,0D,0F,11,15,17,19,1B,1E,
+                     41,43,45,47,49,63,83,85,87,8E,
+                     9B,9C,9D,9E,A1,A3,A5,A7,A9,C3,E3,E5,E7,EE,F5,F6,FB,FC,FD,FE}
+\xeCJK@prePunct {FE}{59,5B,5D,5F,60,69,6B}
+\xeCJK@postPunct{FE}{50,51,52,54,55,56,57,5A,5C,5E,6A}
+\xeCJK@prePunct {FF}{03,04,08,20,3B,5B,E0,E1,E5,E6}
+\xeCJK@postPunct{FF}{01,05,09,0C,0E,1A,1B,1F,3D,5D,
+                     61,63,64,65,67,68,69,6A,6B,6C,6D,6E,6F,70,9E,9F}
+
+\xeCJK@setPunct{4}{0}{28,5B,60,7B}
+\xeCJK@setPunct{5}{0}{21,22,25,27,29,2C,2E,3A,3B,3F,5D,7D}
+
+% prevent from loading CJK.sty
+% and suppress any warning message like
+%
+%    You have requested version 'xxxx/xx/xx' of CJK,
+%    but only version 'xxxx/xx/xx' is available.
+%
+\expandafter\def\csname ver@CJK.sty\endcsname{2020/01/01}
+
+\XeTeXinterchartoks 0 255 {\xeCJK@@cclv}
+\XeTeXinterchartoks 0   1 {\xeCJK@@i\xeCJK@char}
+\XeTeXinterchartoks 4   1 {\xeCJK@char}
+\XeTeXinterchartoks 5   1 {\xeCJK@v@i\xeCJK@char}
+\XeTeXinterchartoks 255 1 {\xeCJK@cclv@i\xeCJK@char}
+
+\XeTeXinterchartoks 0   2 {\xeCJK@prepunctchar}
+\XeTeXinterchartoks 4   2 {\xeCJK@prepunctchar}
+\XeTeXinterchartoks 5   2 {\xeCJK@prepunctchar}
+\XeTeXinterchartoks 255 2 {\xeCJK@prepunctchar}
+
+\XeTeXinterchartoks 0   3 {\xeCJK@postpunctchar}
+\XeTeXinterchartoks 4   3 {\xeCJK@postpunctchar}
+\XeTeXinterchartoks 5   3 {\xeCJK@postpunctchar}
+\XeTeXinterchartoks 255 3 {\xeCJK@postpunctchar}
+
+\XeTeXinterchartoks 255 0 {\xeCJK@cclv@}
+\XeTeXinterchartoks 255 4 {\xeCJK@cclv@iv}
+
+\def\CJKglue{\hskip \z@ \@plus .08\baselineskip}
+\def\CJK@nobreakglue{\nobreak\CJKglue\nobreak}
+
+\edef\xeCJK@CJKkern{\kern -1sp\kern 1sp}
+\edef\xeCJK@prepunctkern{\kern -2sp\kern 2sp}
+\edef\xeCJK@postpunctkern{\kern -3sp\kern 3sp}
+\edef\xeCJK@zerokern{\kern -4sp\kern 4sp}
+
+\newif\if@xeCJK@inmath
+\@xeCJK@inmathfalse
+
+
+% common macros for \CJKaddspaces and \CJKnormalspaces
+%
+%
+%
+\def\xeCJK@ignorespaces{
+  \futurelet\xeCJK@nexttoken\xeCJK@checknext}
+
+\def\xeCJK@checknext{
+  \ifx\xeCJK@nexttoken\@sptoken
+    \expandafter\xeCJK@@checknext
+  \fi}
+
+{
+  \def\:{\xeCJK@@checknext}
+  \global\expandafter\def\: {\futurelet\@let@token\xeCJK@@@checknext}
+}
+
+\def\CJK@stop{\CJK@stop}
+
+\def\xeCJK@@@checknext{
+  \expandafter\futurelet
+    \expandafter\xeCJK@tempb
+      \expandafter\xeCJK@gobble\meaning\@let@token\CJK@stop
+  \if t\xeCJK@tempb
+  \else
+    \let\xeCJK@nexttoken\relax
+    \CJKecglue
+  \fi}
+
+\long\def\xeCJK@gobble#1\CJK@stop{}
+
+% macros for CJKaddspaces
+%
+%  Make `\$ active to add blank spaces before CJK characters if necessary
+\catcode`\^^B=3\relax
+\catcode`\$=13
+
+\def\CJKaddspaces{
+  \def\xeCJK@@cclv{{\xeCJK@zerokern}}
+
+  \def\CJKecglue{\hskip 0.25em plus 0.10em minus 0.10em}
+  \let\xeCJK@@i\CJKecglue
+  \let\xeCJK@v@i\CJKecglue
+
+  \def\xeCJK@cclv@{
+    \ifodd\lastkern
+      \CJKecglue
+    \fi}
+  \let\xeCJK@cclv@iv\xeCJK@cclv@
+
+  \def\xeCJK@cclv@i{
+    \ifcase\lastkern
+      \hskip 0pt
+    \or %1
+      \CJKglue
+    \or %2
+      \xeCJK@ULspecials
+    \or %3
+      \xeCJK@ULspecials
+    \or %4
+      \CJKecglue
+    \fi}
+
+  \catcode`\$=13}
+
+\def${
+  \ifx\protect \@typeset@protect
+    \expandafter\xeCJK@math
+  \else
+    ^^B
+  \fi}
+
+\def\xeCJK@math{
+  \futurelet\xeCJK@temp\xeCJK@@math}
+
+\def\xeCJK@@math{
+  \ifx\xeCJK@temp$
+    \def\xeCJK@tempb{\xeCJK@@@dmath}
+  \else
+    \def\xeCJK@tempb{\xeCJK@@@math}
+  \fi
+  \xeCJK@tempb}
+
+\def\xeCJK@@@dmath#1{^^B^^B}
+
+\def\xeCJK@@@math{
+  \if@xeCJK@inmath
+    \def\xeCJK@tempb{
+      ^^B
+      \@xeCJK@inmathfalse
+      \futurelet\xeCJK@temp\xeCJK@aftermath}
+  \else
+    \def\xeCJK@tempb{
+      \@xeCJK@inmathtrue
+      \xeCJK@cclv@
+      ^^B}
+  \fi
+  \xeCJK@tempb}
+
+\def\xeCJK@aftermath{
+  \ifx\xeCJK@temp\@sptoken
+  \else
+    \xeCJK@zerokern
+  \fi}
+
+%
+%
+%  macros for CJK normal spaces
+\catcode`\$=3
+\def\CJKnormalspaces{
+  \let\xeCJK@@cclv\relax
+  \let\xeCJK@@i\relax
+  \let\xeCJK@v@i\relax
+  \def\CJKecglue{ }
+
+  \def\xeCJK@cclv@{
+    \ifodd\lastkern
+      \xeCJK@@glue
+    \fi}
+  \let\xeCJK@cclv@iv\xeCJK@cclv@
+
+  \def\xeCJK@cclv@i{
+    \ifcase\lastkern
+      \hskip 0pt
+    \or %1
+      \CJKglue
+    \or %2
+      \xeCJK@ULspecials
+    \or %3
+      \xeCJK@ULspecials
+    \fi}
+
+  \def\xeCJK@@glue{
+    \ifx\xeCJK@nexttoken\@sptoken
+      { }
+    \fi
+    \let\xeCJK@nexttoken\relax}
+
+  \catcode`\$=3\relax}
+
+%
+%
+%  CJK no spaces
+\def\CJKnospaces{
+  \catcode`\$=3\relax
+  \let\xeCJK@@cclv\relax
+  \let\xeCJK@@i\relax
+  \let\xeCJK@v@i\relax
+  \let\xeCJK@cclv@\relax
+  \def\xeCJK@cclv@i{{%   We need extra braces for CJKulem/CJKfntef.sty to work.
+    \ifcase\lastkern
+      \hskip 0pt
+    \or %  1
+      \CJKglue
+    \or %  2
+      \xeCJK@ULspecials
+    \or %  3
+      \xeCJK@ULspecials
+    \fi}}
+  \let\xeCJK@cclv@iv\relax
+  \let\xeCJK@ignorespaces\ignorespaces}
+
+\def\xeCJK@setspacemode{
+  \ifxeCJK@nospaces
+    \CJKnospaces
+  \else
+    \ifxeCJK@addspaces
+      \CJKaddspaces
+    \else
+      \CJKnormalspaces
+    \fi
+  \fi}
+
+\CJKnormalspaces
+
+\AtBeginDocument{
+  \xeCJK@setspacemode
+  \ifcsname UL@hook\endcsname
+    \addto@hook\UL@hook{\CJKnospaces
+       \let\xeCJK@unskip\xeCJK@UL@unskip
+       \let\xeCJK@ULspecials\xeCJK@UL@punctgroup}
+  \fi}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%5
+%
+% Set CJK fonts separately
+%
+\def\CJKsymbol#1{{\xeCJK@setfont #1}}
+
+
+%\let\CJKpunctsymbol\CJKsymbol
+\def\CJKpunctsymbol#1{{\xeCJK@setfont \xeCJK@raisechar{#1}}}
+\let\xeCJK@raisechar\relax
+
+\def\xeCJK@setfont{
+  \ifcsname\xeCJK@family/\f@series/\f@shape/\f@size\endcsname
+    \csname\xeCJK@family/\f@series/\f@shape/\f@size\endcsname
+  \else
+    \csname xeCJK@font@\xeCJK@family\endcsname
+    \get@external@font
+    \expandafter\global\expandafter\font
+     \csname\xeCJK@family/\f@series/\f@shape/\f@size\endcsname=\external@font
+  \fi}
+
+% some shorthands for CJK font families; arguments are handled by
+%     \newfontfamily (from fontspec.sty).
+
+\def\setCJKmainfont{
+  \xeCJK@newfontfamily{xeCJK@font@}}
+
+\let\setCJKromanfont\setCJKmainfont
+
+\def\setCJKsansfont{
+  \xeCJK@newfontfamily{xeCJK@font@sans}}
+
+\def\setCJKmonofont{
+  \xeCJK@newfontfamily{xeCJK@font@mono}}
+
+\def\setCJKfamilyfont#1{
+  \xeCJK@newfontfamily{xeCJK@font@#1}}
+
+%
+% Redefine \sffamily and \ttfamily to set CJKfamily
+\DeclareRobustCommand\sffamily
+        {\not@math@alphabet\sffamily\mathsf
+         \fontfamily\sfdefault\CJKfamily{sans}\selectfont}
+
+\DeclareRobustCommand\ttfamily
+        {\not@math@alphabet\ttfamily\mathtt
+         \fontfamily\ttdefault\CJKfamily{mono}\selectfont}
+
+% \xeCJK@newfontfamily is similar to \newfontfamily
+%   but introduce fake slant/bold fonts for CJK characters.
+\newcommand*\xeCJK@newfontfamily[1]{
+  \@ifnextchar[
+    {\xeCJK@newfontfamily@{#1}}
+    {\xeCJK@newfontfamily@{#1}[]}}
+
+\def\xeCJK@newfontfamily@#1[#2]#3{
+  %
+  % Get user defined options
+  \def\xeCJK@temp{#2}
+  \expandafter
+    \xeCJK@getBoldFont\xeCJK@temp BoldFont={}{}\relax
+  \expandafter
+    \xeCJK@getBoldItalicFont\xeCJK@temp BoldItalicFont={}{}\relax
+  \expandafter
+    \xeCJK@getItalicFont\xeCJK@temp ItalicFont={}{}\relax
+
+  \expandafter
+    \xeCJK@getBoldItalicFeatures\xeCJK@temp BoldItalicFeatures={}{}\relax
+  \expandafter
+    \xeCJK@getBoldFeatures\xeCJK@temp BoldFeatures={}{}\relax
+  \expandafter
+    \xeCJK@getItalicFeatures\xeCJK@temp ItalicFeatures={}{}\relax
+
+  \expandafter
+    \xeCJK@getRawFeature\xeCJK@BoldFeatures RawFeature={}{}\relax
+  \edef\xeCJK@Bold@RawFeature{\xeCJK@tempRawFeature}
+
+  \expandafter
+    \xeCJK@getRawFeature\xeCJK@BoldItalicFeatures RawFeature={}{}\relax
+  \edef\xeCJK@BoldItalic@RawFeature{\xeCJK@tempRawFeature}
+
+  \expandafter
+    \xeCJK@getRawFeature\xeCJK@ItalicFeatures RawFeature={}{}\relax
+  \edef\xeCJK@Italic@RawFeature{\xeCJK@tempRawFeature}
+
+  \edef\xeCJK@Features{}
+
+  \ifxeCJK@BoldFont@
+    \ifx\xeCJK@BoldFont\@empty
+
+      \ifx\xeCJK@Bold@RawFeature\@empty
+        \def\xeCJK@Bold@RawFeature{
+          embolden=\xeCJK@emboldenfactor}
+      \else
+        \edef\xeCJK@Bold@RawFeature{
+          embolden=\xeCJK@emboldenfactor,
+                   \xeCJK@Bold@RawFeature}
+      \fi
+
+      \ifx\xeCJK@BoldFeatures\@empty
+        \edef\xeCJK@Features{
+          BoldFeatures={
+            RawFeature={\xeCJK@Bold@RawFeature}}}
+      \else
+        \edef\xeCJK@Features{
+          BoldFeatures={
+            \xeCJK@BoldFeatures,
+            RawFeature={\xeCJK@Bold@RawFeature}}}
+      \fi
+
+      \ifx\xeCJK@BoldItalic@RawFeature\@empty
+        \def\xeCJK@BoldItalic@RawFeature{
+          embolden=\xeCJK@emboldenfactor}
+      \else
+        \edef\xeCJK@BoldItalic@RawFeature{
+          embolden=\xeCJK@emboldenfactor,
+                   \xeCJK@BoldItalic@RawFeature}
+      \fi
+    \fi
+  \fi
+
+  \ifxeCJK@SlantFont@
+    \ifx\xeCJK@ItalicFont\@empty
+
+      \ifx\xeCJK@Italic@RawFeature\@empty
+        \edef\xeCJK@Italic@RawFeature{
+          slant=\xeCJK@slantfactor}
+      \else
+        \edef\xeCJK@Italic@RawFeature{
+          slant=\xeCJK@slantfactor,
+                \xeCJK@Italic@RawFeature}
+      \fi
+
+      \ifx\xeCJK@ItalicFeatures\@empty
+        \edef\xeCJK@ItalicFeatures{
+          RawFeature={\xeCJK@Italic@RawFeature}}
+      \else
+        \edef\xeCJK@ItalicFeatures{
+          \xeCJK@ItalicFeatures,
+          RawFeature={\xeCJK@Italic@RawFeature}}
+      \fi
+
+      \ifx\xeCJK@BoldItalic@RawFeature\@empty
+        \edef\xeCJK@BoldItalic@RawFeature{
+          slant=\xeCJK@slantfactor}
+      \else
+        \edef\xeCJK@BoldItalic@RawFeature{
+          slant=\xeCJK@slantfactor,
+                \xeCJK@BoldItalic@RawFeature}
+      \fi
+
+      \ifx\xeCJK@BoldItalicFeatures\@empty
+        \edef\xeCJK@BoldItalicFeatures{
+          RawFeature={\xeCJK@BoldItalic@RawFeature}}
+      \else
+        \edef\xeCJK@BoldItalicFeatures{
+          \xeCJK@BoldItalicFeatures,
+          RawFeature={\xeCJK@BoldItalic@RawFeature}}
+      \fi
+
+      \ifx\xeCJK@Features\@empty
+        \edef\xeCJK@Features{
+          ItalicFeatures={\xeCJK@ItalicFeatures},
+          BoldItalicFeatures={\xeCJK@BoldItalicFeatures}}
+      \else
+        \edef\xeCJK@Features{
+          \xeCJK@Features,
+          ItalicFeatures={\xeCJK@ItalicFeatures},
+          BoldItalicFeatures={\xeCJK@BoldItalicFeatures}}
+      \fi
+    \fi
+  \fi
+
+  \edef\xeCJK@temp{#2}
+  \ifx\xeCJK@temp\@empty
+  \else
+    \edef\xeCJK@temp{,#2}
+  \fi
+
+  \ifx\xeCJK@Features\@empty
+  \else
+    \edef\xeCJK@Features{,\xeCJK@Features}
+  \fi
+
+  \edef\xeCJK@Features{
+    [BoldFont={#3},
+     ItalicFont={#3},
+     BoldItalicFont={#3}%  The first three parameters can be overridden by
+                        %  user defined parameters in #2
+     \xeCJK@temp\xeCJK@Features]}
+
+  \expandafter
+    \newfontfamily@i\csname #1\expandafter\endcsname
+       \xeCJK@Features
+       {#3}}
+
+\def\xeCJK@setmacro@getkey#1{
+  \expandafter\def\csname xeCJK@get#1\endcsname ##1#1=##2##3\relax{
+    \expandafter\edef\csname xeCJK@#1\endcsname{##2}
+  \edef\xeCJK@temp{##1##3}}}
+
+\xeCJK@setmacro@getkey{BoldFont}
+\xeCJK@setmacro@getkey{ItalicFont}
+\xeCJK@setmacro@getkey{BoldItalicFont}
+\xeCJK@setmacro@getkey{ItalicFeatures}
+\xeCJK@setmacro@getkey{BoldFeatures}
+\xeCJK@setmacro@getkey{BoldItalicFeatures}
+
+\def\xeCJK@getRawFeature#1RawFeature=#2#3\relax{
+  \edef\xeCJK@tempRawFeature{#2}}
+
+\define@key[zf]{preparse}{ItalicFeatures}{
+  \edef\zf@it@feat{,#1}
+  \edef\zf@family@long{\zf@family@long itfeat:#1}}
+
+% redefine \CJKfamily.
+
+\def\xeCJK@font@{}
+
+\DeclareRobustCommand\CJKfamily[1]{
+  \ifcsname xeCJK@font@#1\endcsname
+    \def\xeCJK@family{#1}
+  \else
+    \ifcsname xeCJK@#1@warned\endcsname
+    \else
+      \PackageWarning{xeCJK}{
+        Unknown CJK family `#1' is ignored.^^J
+        Use \string\setCJKfamilyfont \space to define a CJK family.}
+      \expandafter\gdef\csname xeCJK@#1@warned\endcsname{}
+    \fi
+  \fi}
+\CJKfamily{}
+
+\def\xeCJKsetslantfactor#1{\edef\xeCJK@slantfactor{#1}}
+\def\xeCJKsetemboldenfactor#1{\edef\xeCJK@emboldenfactor{#1}}
+
+\xeCJKsetslantfactor{0.17}
+\xeCJKsetemboldenfactor{4}
+
+
+%
+% Loading language dependent macros.
+%
+\def\CJKlanguage#1{
+  \ifcsname  CJK@#1\endcsname
+    \edef\xeCJK@language{\csname CJK@#1\endcsname}
+  \else
+    \PackageWarning{xeCJK}{
+       Unknown CJK language `#1' is ignored.^^J
+       Valid languages are `Chinese-Simp', `Chinese-Trad', `Japanese' and 'Korean'.}
+    \relax
+  \fi}
+
+\expandafter\def\csname CJK@zh-cn\endcsname{chs}
+\expandafter\def\csname CJK@Chinese-Simp\endcsname{chs}
+\expandafter\def\csname CJK@Chinese-Trad\endcsname{cht}
+\expandafter\def\csname CJK@Japanese\endcsname{ja}
+\expandafter\def\csname CJK@Korean\endcsname{ko}
+\CJKlanguage{Chinese-Simp}
+
+\input{xeCJK.chr}
+
+
+% macros for using CJKfntef.sty and CJKnumb.sty
+%
+\@ifundefined{UL@hskip}{\let\UL@hskip\relax}{}
+
+\let\xeCJK@ULspecials\relax
+
+\def\xeCJK@UL@punctgroup{
+  \ifx\hskip\UL@hskip
+    \egroup
+    \UL@stop
+    \UL@start
+    \bgroup
+  \fi}
+
+
+\ifxeCJK@num
+  \edef\CJK@UnicodeEnc{UTF8}
+  \def\CJKaddEncHook#1#2{\expandafter\def\csname xeCJK@enc@#1\endcsname{#2}}
+  \def\Unicode#1#2{\@tempcnta #1\relax
+    \multiply\@tempcnta 256\relax
+    \advance\@tempcnta #2\relax
+    \char\@tempcnta}
+  \RequirePackage{CJKnumb}
+  \csname xeCJK@enc@UTF8\endcsname
+  \def\CJK@tenthousand{涓噠
+\fi
+
+\endlinechar `\^^M
+\endinput 

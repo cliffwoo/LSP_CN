@@ -1,0 +1,361 @@
+% -*-coding: utf-8 -*-
+
+\defaultfont
+\appendix
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\BiAppChapter{GCC对C语言的扩展}{}
+GCC（GNU编译器集合, GNU Compiler Collection）为C语言提供了多种扩展功能，其中的一些扩展功能对系统程序员尤其有帮助。在本附录所提到的C语言功能扩展中，大多数为编译器提供了关于代码的行为和功能的附加信息。编译器利用这些信息可以产生更高效的机器代码。其他扩展则是对C语言的补充，尤其是在底层的系统调用方面。
+
+最新的C语言标准---ISO C99，包括了GCC所提供的部分扩展功能。有些扩展功能与C99标准中的类似，但另外一些扩展功能在ISO C99中使用了完全不同的实现。新编写的代码应尽量遵循ISO C99标准。在本附录中，我们不会提及此类扩展，而只讨论GCC所特有的扩展功能。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\BiSection{GNU C}{}
+GCC所支持的C语言经常被称为GNU C语言。在90年代，GNU C弥补了C语言本身的一些缺陷，提供了类似于复变量、零长度数组、内联函数、命名初始化等功能。经过十年的发展，C语言标准终于升级到了ISO C99，这导致GNU C的扩展不是很符合新的标准。然而GNU C则持续提供有帮助的特性，许多Linux程序员在其兼容C90或C99标准的代码中，仍然会使用部分GNU C的特性（通常是只使用一两个扩展功能）。
+
+一个典型的使用GCC扩展的例子是Linux的内核，内核代码严格遵照GNU C。最近，Intel花了番功夫对Intel C编译器(ICC, Intel C Compiler)进行改造，使ICC能理解(Linux)内核所使用的那些GNU C扩展。因此，许多扩展已经变得不仅仅是只有GCC才支持了。
+
+\BiSection{内联函数}{}
+将函数声明为内联（inline），编译器就会将该函数的整段代码复制到函数的调用地址。编译器直接运行函数本身，而不是将其存储在外部并在调用时跳转至该函数。这样处理既可以省去了函数调用的开销也可以在函数调用地址进行可能的优化（因为编译器能够将调用函数和被调用函数一起进行优化）。当函数的参数在调用时是常量时，后者尤其有效。然而，将函数代码拷贝到每个调用它的地方，必然会增加整体代码长度。因此，只有当函数很小很简单，或者调用次数不是很多的时候，才可以将其声明为内联函数。
+
+GCC支持inline关键字已经很多年了，使用inline就是指示编译器将函数进行内联。C99标准中这样规定inline关键字：
+\begin{lstlisting}
+	static inline int foo (void) { /* ... */ }
+\end{lstlisting}
+但从技术上讲，inline关键字只是一种提示，它仅仅是建议编译器对函数进行内联。GCC在此基础上提供了扩展功能，可以指定编译器总是将指定函数进行内联，使用方法如下：
+
+\begin{lstlisting}
+	static inline __attribute__ (( always_inline)) int foo (void){ /*...*/ } \right)}
+\end{lstlisting}
+内联函数的一个显而易见的用途是来替代预处理宏（preprocessor macro）。GCC中的内联函数与宏的行为一样，而且还可以进行类型检查。下面的这个宏：
+\begin{lstlisting}
+	  #define max(a,b) ({ a > b ? a : b; })
+\end{lstlisting}
+可以使用以下的内联函数替代：
+\begin{lstlisting}
+	static inline max (int a, int b)
+	{
+		if (a > b)
+			return a;
+		return b;
+	}
+\end{lstlisting}
+程序员一般会过度使用内联函数。在大多数现代的系统架构，尤其是x86上，函数调用的开销非常非常的低。只有在非常需要的情况下才使用内联函数。
+
+\BiSection{禁用内联}{}
+在主动优化模式中，GCC会自动选择适合内联的函数，并对其进行内联。一般情况这都是一个不错的处理方式，但有时程序员能判断出函数内联不会正常工作。比如，当使用\verb+__builtin_return_address+时（本附录稍后介绍），内联就可能产生问题。使用noinline可以禁用内联函数：
+\begin{lstlisting}
+__attribute_ _ ((noinline)) int foo (void) { /* ... */ }
+\end{lstlisting}
+
+\BiSection{纯函数}{}
+纯函数是指没有任何影响的函数，其返回值仅反映了函数的参数或者非易失（nonvolatile）的全局变量。对于参数或者全局变量的访问必须是只读的。对此类函数可以进行循环优化（loop optimization）和子表达式删除（subexpression elimination）。用pure关键字表明函数为纯函数：
+\begin{lstlisting}
+    __attribute__ ((pure)) int foo (int val) { /* ... */ }
+\end{lstlisting}
+
+常见的例子是strlen()函数。在输入相同的情况下，无论调用多少次，该函数的返回值都保持不变，因此可以从循环中提出来，仅仅调用一次即可。例如，考虑以下代码：
+\begin{lstlisting}因为此类函数的返回值是其唯一的出口。
+    /* 逐字符地打印数组p中的元素的大写形式 */
+    for (i=0; i < strlen (p); i++)
+        printf ("%c", toupper (p[i]));
+\end{lstlisting}
+
+如果编译器不知道strlen()是纯函数，就可能在每次循环中调用一次该函数！
+
+聪明的程序员会这样改写代码：（如果将strlen()标记为单纯函数，编译器也会按如下代码处理）
+\begin{lstlisting}
+    size_t len;
+    
+    len = strlen (p);
+    for (i=0; i < len; i++)
+        print ("%c", toupper (p[i]));
+\end{lstlisting}
+
+附带说一下，更聪明的程序员（比如像本书的读者）还可能会这么做：
+\begin{lstlisting}
+    while (*p)
+        printf ("%c", toupper (*p++));
+\end{lstlisting}
+
+因为纯函数的返回值是其唯一的功能，因此让纯函数返回void是非法的，也是没有任何意义的。
+\BiSection{常函数}{}
+"常函数"是限制更严格的单纯函数。这种函数不访问全局变量，也不能将指针作为参数。因此，常值函数的返回值仅反映以值的方式传进来的参数。除了纯函数的一些优化方式之外，对常函数还可以进行其他优化。数学函数abs()是典型的常函数（假定不进行诸如保存状态或其他假借优化之名所做的小动作）。用const关键字标记常函数：
+\begin{lstlisting}
+	__attribute__ ((const)) int foo (void) { /* ... */ }
+\end{lstlisting}
+与纯函数一样，让常值函数返回void也是没有意义的。
+\BiSection{不返回的函数}{}
+如果函数不返回(比如在函数中调用了exit())，程序员可以用noreturn关键字标记该函数，以此来通知编译器：
+\begin{lstlisting}
+	__attribute__ ((noreturn)) void foo (int val) { /* ... */ }
+\end{lstlisting}
+因为无论什么情况下，被调用的函数都不会返回，编译器则可以进行额外的优化。此类函数的返回值只能是void。
+\BiSection{分配内存的函数}{}
+如果该函数返回指针永远不是已分配内存的别名\footnote{内存别名是指有两个或两个以上的指针指向同一个内存地址。内存别名很常见，比如我们将指针的值赋给另外的指针时，就会产生内存别名。当然，还可能有一些更复杂的情况也会出现内存别名。如果函数返回的是新分配的内存地址，则不会有其他的指针指向同一个内存地址。}（基本可以确认函数分配了新的内存并返回指向新内存的指针），程序员就可以将该函数用malloc标记，而编译器也可以进行适当的优化：
+\begin{lstlisting}
+    __attribute__ ((malloc)) void * get_page (void)
+    {
+        int page_size;
+        
+        page_size = getpagesize ();
+        if (page_size <= 0)
+            return NULL;
+        
+        return malloc (page_size);
+    }
+
+\end{lstlisting}
+\BiSection{强制调用函数检查返回值 }{}
+属性\verb+warn_unused_result+可以指示编译器在函数返回值没有保存或没有用在条件语句中时产生警告；这不算是优化，仅是一个辅助功能：
+\begin{lstlisting}
+    __attribute__ ((warn_unused_result)) int foo (void) { /* ... */ }
+\end{lstlisting}
+当被调用函数的返回值非常重要的时候，这样处理可以让程序员所有调用函数都检查并处理了返回值。read()一类函数的返回值虽然很重要，但却经常被忽视，这时使用\verb+warn_unused_result+属性再合适不过了。这类函数不能返回void。
+
+\BiSection{将函数标记为deprecated }{}
+deprecated属性指示编译器，当函数被调用时产生警告信息：
+\begin{lstlisting}
+    __attribute__ ((deprecated)) void foo (void) { /* ... */ }
+\end{lstlisting}
+这有助于提醒程序员不要使用已被弃用或过时的函数。
+\BiSection{将函数标记为used}{}
+有些情况下，函数会以编译器无法察觉的形式被调用。将函数用used标记可以指示编译器程序中使用了该函数，尽管从表面上看该函数从未被使用：
+\begin{lstlisting}
+    __attribute__ ((used)) void foo (void) { /* ... */ }
+\end{lstlisting}
+编译器会输出相应的汇编语言，而且不输出函数未被使用的警告。当静态函数仅被手写的汇编代码调用时，该属性就非常有帮助了。通常情况下（未使用used时），当某函数时没有被调用时，编译器会产生警告，并可能将该函数优化掉。
+
+\BiSection{将函数或参数标记为unused}{}
+unused属性指示编译器指定的函数或参数未被使用，并指示编译器不产生相应的警告：
+\begin{lstlisting}
+     void foo (long __attribute__ ((unused)) value) { /* ... */ }
+\end{lstlisting}
+这个属性可用于下列情形：使用了-W或-Wunused编译选项，有一些函数必须匹配事先定好的函数签名（这在事件驱动界面编程或者信号处理函数中很常见），而你还想捕捉到真正未使用的函数参数。
+\BiSection{将结构体进行打包（pack）}{}
+packed属性指示编译器对某类型或变量在内存中以尽可能小的内存空间保存（打包至内存），这个属性潜在的忽略了内存对齐的要求。用该属性限定结构体或联合时，其中的所有变量都会被打包。只限定一个变量时，只有被限定的变量被打包。
+下列代码将结构体中的所有变量打包至所需的最小内存空间(1)。
+\begin{lstlisting}
+     struct __attribute__ ((packed)) foo (void) { ... };
+\end{lstlisting}
+举例来说，一个结构体含有一个char类型的变量，随后是一个int类型的变量，在编译时通常会将int类型的变量对齐到char类型变量的3个字节之后，而不是将其直接放在char变量的下一个内存地址中。编译器在两个变量之间填充一些不使用的字节，以对变量进行对齐。打包后的结构体不含有这些填充字节，尽可能少的使用些内存，但不满足相应体系结构上的对齐要求。
+
+\BiSection{增加变量的内存对齐量 }{}
+除了可以对变量进行打包之外，GCC还允许程序员指定给定变量的最小对齐量。在对该变量进行对齐时，编译器不使用体系结构和ABI所要求的最小对齐量，而是使用不小于该值的对齐量。比如，下列语句声明整型变量\verb+beard_length+，并指定至少进行32个字节的内存对齐（而不是常见的对32位整型变量所进行4字节对齐）：
+
+\begin{lstlisting}
+    int beard_length __attribute__ ((aligned (32))) = 0;
+\end{lstlisting}
+通常来讲，强制指定类型的内存对齐量只有在下列情形才能用到：一是硬件的内存对齐要求比体系结构更高，二是在混写C语言和汇编代码中希望使用特定对齐量的语句时。比如说在保存处理器缓存线中经常使用到的变量，以便优化缓存行为时，就可以使用这个功能。Linux内核用到了这种技术。
+
+除了指定最小内存对齐量之外，还可以让GCC将给定变量类型的对齐量设定为所有类型的最小内存对齐量中最大的那个值。下面这代码片段就指定了变量\verb+parrot_height+的内存对齐量为GCC中可以使用的最大值，该值通常是double型：
+\begin{lstlisting}
+     short parrot_height __attribute__ ((aligned)) = 5;
+\end{lstlisting}
+如何使用内存对齐量，通常要权衡时间和空间的消耗：经过上述方式对齐的变量会占用更多空间，但是在变量上的复制（以及其他的复杂操作）可能更省时间，因为编译器可以调用处理大块内存的机器指令，以处理大块内存。
+体系结构和工具链通常会限制变量所能使用的最大的内存对齐量。在有些Linux体系结构中，链接器仅接受一个相当小的默认的对齐值。这时，使用aligned所指定的对齐量就会被设定为默认值。此外，当你指定变量的对齐量为32个字节，但系统的链接器最多只能对齐8个字节，那么变量就会使用8个字节进行对齐。
+\BiSection{将全局变量置于寄存器中 }{}
+GCC允许程序员将全局变量放在指定的寄存器中，这样变量将在程序的整个执行期内都处于该寄存器中。GCC中，这样的变量称为“全局寄存器变量”。
+语法要求程序员指定具体的寄存器，下面的代码中使用寄存器ebx：
+\begin{lstlisting}
+    register int *foo asm ("ebx");
+\end{lstlisting}
+
+程序员必须保证指定的寄存器不能被函数破坏（function-clobbered）：就是说，指定的寄存器必须能被局部函数使用，在函数调用时会进行保存和恢复，而且不能被体系结构或者操作系统的ABI指定用作任何特殊的用途。如果选择的寄存器不合适，编译器就会产生警告信息。要是选择的寄存器合适（本例中使用的ebx在x86架构下就是合适的），编译器就会停止使用该寄存器。
+当变量被频繁使用时，将其置于寄存器中可以带来显著的性能提升。虚拟机就是个很好的例子。比如说，将保存虚拟栈帧指针（virtual stack frame pointer）的变量置于寄存器中，将带来很大的好处。另一方面，要是体系结构本身的寄存器就很少（比如像x86中），优化就没什么意义了。
+全局寄存器变量不能用于信号处理函数，也不能在多线程程序中使用。这些变量不能设置初始值，因为没有什么机制能让程序为寄存器设定默认值。全局寄存器变量的声明应该位于所有的函数声明之前。
+\BiSection{分支预测}{}
+GCC允许程序员对表达式的期望值进行预测，比如告诉编译器，条件语句可能是真还是假。相应地，GCC可以对代码块进行顺序调整等优化，这样可以改善条件语句的运行性能。
+GCC中，分支预测的语法很难看。为了让分支预测看起来舒服些，使用下列预编译宏：
+\begin{lstlisting}
+    #define likely(x)    __builtin_expect (!!(x), 1)
+    #define unlikely(x)  __builtin_expect (!!(x), 0)
+\end{lstlisting}
+程序员可以将表达式分别用likely()或者unlikely()括起来，以标记为该表达式“可能为真”或者“不可能为真”。
+下列例子标示分支“不可能为真”（也即，“可能为假”）
+\begin{lstlisting}
+    int ret;
+    
+    ret = close (fd);
+
+    if (unlikely (ret))
+        perror ("close");
+\end{lstlisting}
+对应的，下列例子标示分支“可能为真”：
+\begin{lstlisting}
+    const char *home;
+    
+    home = getenv ("HOME");
+    if (likely (home))
+        printf ("Your home directory is: %s\n", home);
+    else
+        fprintf (stderr, "Environment variable HOME not set!\n");
+\end{lstlisting}
+
+与内联函数一样，程序员总是倾向于使用过多的分支注解。一旦开始对表达式进行预测，你就可能想去预测所有表达式。当心，只有当你事先知晓，并对表达式在几乎所有的情况下（有99\%的把握）为真或假坚信不疑的情况下，才应该将分支标记为“可能为真”或“不可能为真”。要牢记，错误的预测还不如根本不做预测。
+\BiSection{获取表达式的类型}{}
+GCC提供关键字typeof，用以取得给定表达式的类型。从语义上看，typeof关键字跟sizeof()的机理相同。比如，下列语句返回x所指向的变量的类型：
+\begin{lstlisting}
+    typeof (*x)
+\end{lstlisting}
+
+可以用下列语句来声明此类型的一个数组y：
+\begin{lstlisting}
+    typeof (*x) y[42];
+\end{lstlisting}
+
+typeof常用来编写“安全”的宏，可以用该宏来操作任意的算术值，而且仅需宏的参数取一次值即可：
+\begin{lstlisting}
+    #define max(a,b) ({          \
+            typeof (a) _a = (a); \
+            typeof (b) _b = (b); \
+            _a > _b ? _a : _b; \
+    })    
+\end{lstlisting}
+\BiSection{获取类型的内存对齐量}{}
+GCC提供关键字\verb+__alignof__+来获取给定对象的对齐量。这个对齐量跟体系结构和ABI都有关。如果当前的体系结构没有提供必需的对齐量，关键字\verb+__alignof__+就返回ABI的推荐对齐量。否则，该关键字返回最小对齐量。
+其语法跟sizeof相同：
+\begin{lstlisting}
+    __alignof__(int)
+\end{lstlisting}
+依赖于体系结构，上述代码可能返回4，因为32位整型变量通常是按照4个字节的边界进行对齐的。
+该关键字还可用于左值。这种情况下，返回的对齐量是相应类型的最小内存对齐量，而不是该左值本身的对齐量。如果用aligned属性修改过最小内存对齐量（在“增加变量的内存对齐量 ”中讨论过），那么该修改可以通过\verb+__alignof__+体现。
+
+比如，考虑以下结构体：
+\begin{lstlisting}
+    struct ship {
+            int year_built;
+            char canons;
+            int mast_height;
+    };
+\end{lstlisting}
+和下列代码片段：
+\begin{lstlisting}
+    struct ship my_ship;
+    
+    printf ("%d\n", __alignof__(my_ship.canons));
+\end{lstlisting}
+在上述代码中，尽管对于结构体的内存对齐后可能导致canons占用4个字节，但\verb+__alignedof__+表达式将返回1。
+\BiSection{ 结构体中成员的偏移量}{}
+GCC内置了一个可以获得结构体中某成员在该结构体中的偏移量的关键字。宏offsetof()在\verb+<stddef.h>+中定义，并且是ISO C标准的一部分。大多数的实现都很差劲，这些实现用到了讨厌的指针算术操作，而且代码很难懂。GCC的这个扩展更简单，而且速度可能更快：
+\begin{lstlisting}
+    #define offsetof(type, member) __builtin_offsetof (type, member)
+\end{lstlisting}
+上述调用返回了结构体类型type中成员member的偏移量，也就是，从结构体开始到该成员的字节数（从0开始）。例如，考虑下列结构体：
+\begin{lstlisting}
+    struct rowboat {
+        char *boat_name;
+        unsigned int nr_oars;
+        short length;
+    };
+\end{lstlisting}
+实际的偏移量依赖于变量的大小，以及体系结构的对齐需求和填充行为；但在32位机上，对结构体rowboat和\verb+boat_name、nr_oars、length+调用offsetof()，将分别返回0，4和8。
+Linux系统中，宏offsetof()已经定义为GCC的关键字，程序员不必重新定义。
+\BiSection{获取函数返回地址}{}
+GCC提供一个以获取当前函数（或是当前函数的某个调用者）的返回地址的关键字：
+\begin{lstlisting}
+    void * __builtin_return_address (unsigned int level)
+\end{lstlisting}
+参数level指定应该返回函数调用链（call chain）中哪个函数的返回地址。取0，指定的是当前函数(f0)的返回地址；取1，指定的是函数(f0)的调用函数(f1)的返回地址；取2，指定的是调用f1的函数的返回地址；以此类推。
+如果当前的函数f0是内联函数，则将返回f1的返回地址。要是觉得不能接受，可以使用\verb+__builtin_return_address+关键字（在“强制禁用内联 {noinline}”中讲过）命令编译器不将该函数作为内联函数处理。
+关键字\verb+__builtin_return_address+有几种用途。可以用来调试或提供信息。还可以展开函数调用链，用以实现内部检查、故障信息转储工具（crash dump utility）、调试器等。
+注意，有些体系结构只返回当前函数的地址。在这类体系结构中，非0参数可能产生随机的返回值。因此，只有参数是0时才是可移植的，非0值应该只用于调试。
+
+\BiSection{在Case中使用范围}{}
+GCC允许在case语句对单独的代码块指定一个值的范围。一般的语法是这样的：
+\begin{lstlisting}
+    case low ... high:
+\end{lstlisting}
+比如：
+\begin{lstlisting}ospec
+    switch (val) {
+    case 1 ... 10:
+            /* ... */
+            break;
+    case 11 ... 20:
+            /* ... */
+            break;
+    default:
+            /* ... */
+    }
+\end{lstlisting}
+在处理带ASCII码的case语句的范围时，这个功能尤其有用：
+\begin{lstlisting}
+    case 'A' ... 'Z':
+\end{lstlisting}
+
+
+注意，在省略号前后都有一个空格。不指定空格会把编译器弄糊涂，尤其是当范围是整型值的时候。应该这样写：
+\begin{lstlisting}
+    case 4 ... 8:
+\end{lstlisting}
+不要这样写：
+\begin{lstlisting}
+    case 4...8:
+\end{lstlisting}
+
+\BiSection{void和函数指针的算术操作}{}
+在GCC中，void类型的指针可以做加减法，函数指针也可以做加减法。正常情况下，ISO C标准是不允许此类指针运算的，因为不存在void指针的大小这个概念，其大小取决于指针真正指向的内容。为了进行这种运算，GCC将指向内容的大小当做是1个字节。这样，下列代码将a增加1：
+\begin{lstlisting}
+    a++;        /* a 是个void指针 */
+\end{lstlisting}
+使用编译选项-Wpointer-arith，在用到上述扩展时，GCC就会产生一条警告信息。
+\BiSection{让代码变得更美观并有更好的移植性}{}
+我们必须承认，\verb+__attribute__+语法不是很美观。为了更好的使用本章中提到的一些扩展，甚至还需要通过预处理宏进行处理。通过调整代码外观，可以对我们使用这些扩展功能有一定的帮助。
+通过使用预处理器，很容易达成这个目的。同时，还可以让这些GCC扩展具有更好的可移植性；如果编译器不是GCC（无论此时编译器是什么），那就把这些扩展定义为空。
+为了达到这个目的，只需将下列代码放入头文件，并在源文件中引用该头文件：
+\begin{lstlisting}
+    #if __GUNC__ >= 3
+    # undef  inline
+    # define inline        inline __attribute ((always_inline))
+    # define __noinline    __attribute__ ((noinline))
+    # define __pure        __attribute__ ((pure))
+    # define __const       __attribute__ ((const))
+    # define __noreturn    __attribute__ ((noreturn))
+    # define __malloc      __attribute__ ((malloc))
+    # define __must_check  __attribute__ ((warn_unused_result))
+    # define __deprecated  __attribute__ ((deprecated))
+    # define __used        __attribute__ ((used))
+    # define __unused      __attribute__ ((unused))
+    # define __packed      __attribute__ ((packed))
+    # define __align(x)    __attribute__ ((aligned (x)))
+    # define __align_max   __attribute__ ((aligned))
+    # define likely(x)     __builtin_expect (!!(x), 1)
+    # define unlikely(x)   __builtin_expect (!!(x), 0)
+    #else
+    # define __noinline    /* no noinline */
+    # define __pure        /* no pure */
+    # define __const       /* no const */
+    # define __noreturn    /* no noreturn */
+    # define __malloc      /* no malloc */
+    # define __must_check  /* no warn_unused_result */
+    # define __deprecated  /* no deprecated */
+    # define __used        /* no used */
+    # define __unused      /* no unused */
+    # define __packed      /* no packed */
+    # define __align(x)    /* no aligned */
+    # define __align_max   /* no aligned_max */
+    # define likely(x)     (x)
+    # define unlikely(x)   (x)
+    #endif
+\end{lstlisting}
+
+比如，下列代码以上面定义的简写方式将函数定义为纯函数：
+\begin{lstlisting}
+    __pure int foo (void) { /* ... */ }
+\end{lstlisting}
+如果使用GCC编译，函数就被标记上pure属性。如果使用的不是GCC，预编译器将\verb+__pure+标记替换为空（no-op）。需要注意的是，我们可以在定义前指定多种属性，因此同时使用上面的几个定义，也不会有问题。
+
+这样处理之后，代码更容易编写，看起来更漂亮，也有更好的可移植！
+
+
+
+
+
+
+
+
+
+
+
+
