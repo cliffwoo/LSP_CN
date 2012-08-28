@@ -126,7 +126,7 @@ b Linux内核不再产生这个信号；它只是为了向后兼容。
 
 \section{基本信号管理}
 
-最简单古老的信号管理接口是signal()函数。该函数由ISO C89标准定义，其中只定义了信号支持的最少的共同特征，该系统调用是非常基本的。Linux通过其他接口提供了更多的信号控制，我们将在本章稍后介绍。因为signal()是最基本的，也由于它是在ISO C中定义的，因此它的使用相当普遍，我们先来讨论它:
+最简单古老的信号管理接口是signal()函数。该函数由ISO C89标准定义，其中只定义了信号支持的最少的共同特征，该系统调用是非常基本的。Linux通过其它接口提供了更多的信号控制，我们将在本章稍后介绍。因为signal()是最基本的，也由于它是在ISO C中定义的，因此它的使用相当普遍，我们先来讨论它:
 
 \begin{lstlisting}
 #include <signal.h>
@@ -142,7 +142,7 @@ sighandler_t signal (int signo, sighandler_t handler);
 void my_handler (int signo);
 \end{lstlisting}
 
-Linux用typedef将该函数原型定义为sighandler\_t。其他的Unix系统直接使用函数指针；一些系统则有它们自己的类型，可能不会以sighandler\_t命名。追求可移植性的程序不要直接使用该类型。
+Linux用typedef将该函数原型定义为sighandler\_t。其它的Unix系统直接使用函数指针；一些系统则有它们自己的类型，可能不会以sighandler\_t命名。追求可移植性的程序不要直接使用该类型。
 
 当内核给已经注册过信号处理程序的进程发送信号时，内核会停止程序的正常指令流，并调用信号处理程序。信号的值被传递给信号处理程序，该值就是signo最初提供给signal()的值。
 
