@@ -11,8 +11,8 @@ all:
 ifneq ($(empty),$(XELATEX))
 	xelatex main.tex
 	xelatex main.tex
-	@echo Done. Starting the browser......
-	@$(PDFREADER) main.pdf >/dev/null 2>&1 &
+#	@echo Done. Starting the browser......
+#	@$(PDFREADER) main.pdf >/dev/null 2>&1 &
 endif
 ifneq ($(empty),$(PDFLATEX))
 	@echo Making pdflatex......

@@ -27,11 +27,6 @@
 
 % 论文包含的内容
 \includeonly{
-                % body/Tricks,
-                % body/UpdateLog,
-                % body/ToTemplateMaintainers,
-                % body/copyright,
-                % body/conclusion,
 body/Preface,
 body/Copyright,
 body/Ch1,
@@ -46,10 +41,7 @@ body/Ch9,
 body/Ch10,
 appendix/appA,
 appendix/bibliography,
-                % appendix/Authorization,
-                % appendix/acknowledgements,
-                % appendix/Resume
-            }
+}
 \graphicspath{{figures/}} %定义所有的eps文件在 figures 子目录下
 
 \begin{document}
@@ -100,12 +92,6 @@ appendix/bibliography,
 \mainmatter
 \defaultfont % 对应于小四的标准字号为12pt, 可以在正文中用此命令修改所需要字体的的大小
 
-% \include{body/Introduction}
-% \include{body/Tricks}
-% \include{body/UpdateLog}
-% \include{body/ToTemplateMaintainers}
-% \include{body/copyright}
-% \include{body/conclusion}   % 结论
 \include{body/Ch1}
 \include{body/Ch2}
 \include{body/Ch3}
@@ -116,29 +102,8 @@ appendix/bibliography,
 \include{body/Ch8}
 \include{body/Ch9}
 \include{body/Ch10}
-%参考文献
-% \defaultfont
-% \ifx\atempxetex\usewhat
-% \bibliographystyle{chinesebst2005_UTF8}
-% \else
-% \bibliographystyle{chinesebst2005_UTF8}
-% \fi
-% \addcontentsline{toc}{chapter}{\hei \ReferenceCName}      % 参考文献加入到中文目录
-% \addcontentsline{toe}{chapter}{\bfseries \xiaosi \ReferenceEName} % 参考文献加入到英文目录
-% \addtolength{\bibsep}{-0.8 em} \nocite{*}
-% \bibliography{reference/reference}
-
-%\addtocontents{fen}{\protect\vskip1\baselineskip}
-%\addtocontents{ten}{\protect\vskip1\baselineskip}
-%英文图形和表格索引里加入空白行，通常放在 \include{appendix/appA}% 附录A之前。
-%区分开正文和附录的图形和表格，一般没有这个必要。
-
 \include{appendix/appA}            % 附录A
 \include{appendix/bibliography}     % 参考文献
-% \include{appendix/publications}    % 所发文章
-% \include{appendix/Authorization}   % 承诺
-% \include{appendix/acknowledgements}% 致谢
-% \include{appendix/Resume}          % 个人简历
 
 \clearpage
 \ifx\atempxetex\usewhat\else
